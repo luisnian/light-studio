@@ -1,0 +1,11 @@
+[package]
+name = "light-studio-astro"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Light Studio astronomy for photo planning: Sun, Moon and Milky Way positions, rise and set, twilight, golden and blue hours, moon phases, meteor showers, depth of field and star-trail exposure"
+
+[lints]
+workspace = true
+
+[dependencies]

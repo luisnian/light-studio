@@ -1,0 +1,26 @@
+[package]
+name = "light-studio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Light Studio: a photo planning app (Sun, Moon, Milky Way, terrain and shadows)"
+
+[lints]
+workspace = true
+
+[dependencies]
+light-studio-astro = { path = "../astro" }
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }
+egui = "0.36"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
+qrcode = { version = "0.14", default-features = false }
+getrandom = "0.3"
+log = "0.4"
+web-time = "1"
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }
+
+[dev-dependencies]
+png = "0.18"
