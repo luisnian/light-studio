@@ -195,12 +195,33 @@ pub fn paint_chip_at(p: &Painter, r: Rect, t: &Tokens, k: f32) {
     p.rect_stroke(r, radius, Stroke::new(1.0, t.card_stroke.gamma_multiply(k)), StrokeKind::Inside);
 }
 
-/// A card: a larger chip, with a shadow under it.
+/// The graphite glass of cards and menus: a dark grey (a light grey in the light look) that lets the map show through.
+fn glass(t: &Tokens, alpha: u8) -> Color32 {
+    if t.dark { Color32::from_rgba_unmultiplied(36, 36, 39, alpha) } else { Color32::from_rgba_unmultiplied(248, 248, 250, alpha) }
+}
+
+/// A card: graphite glass with a hairline and a soft shadow; `k` (0..1) scales how opaque it is.
 pub fn paint_card(p: &Painter, r: Rect, t: &Tokens, k: f32) {
+    paint_glass(p, r, t, 196, k);
+}
+
+/// A card that holds a lot of text over the map (the big cards): the same glass, more opaque so the map does not get in the way.
+pub fn paint_card_big(p: &Painter, r: Rect, t: &Tokens) {
+    paint_glass(p, r, t, 226, 1.0);
+}
+
+fn paint_glass(p: &Painter, r: Rect, t: &Tokens, alpha: u8, k: f32) {
     let radius = CornerRadius::same(R_CARD as u8);
-    p.rect_filled(r.translate(egui::vec2(0.0, 2.0)), radius, Color32::from_black_alpha(46).gamma_multiply(k));
-    p.rect_filled(r, radius, t.chrome.gamma_multiply(k));
-    p.rect_stroke(r, radius, Stroke::new(1.0, t.card_stroke.gamma_multiply(k)), StrokeKind::Inside);
+    // a soft shadow: two layers, wider and fainter outside
+    p.rect_filled(
+        r.expand(6.0).translate(egui::vec2(0.0, 6.0)),
+        CornerRadius::same(R_CARD as u8 + 6),
+        Color32::from_black_alpha(18).gamma_multiply(k),
+    );
+    p.rect_filled(r.translate(egui::vec2(0.0, 2.0)), radius, Color32::from_black_alpha(50).gamma_multiply(k));
+    p.rect_filled(r, radius, glass(t, alpha).gamma_multiply(k));
+    let hairline = if t.dark { Color32::from_white_alpha(30) } else { Color32::from_black_alpha(24) };
+    p.rect_stroke(r, radius, Stroke::new(1.0, hairline.gamma_multiply(k)), StrokeKind::Inside);
 }
 
 #[cfg(test)]

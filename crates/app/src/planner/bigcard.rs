@@ -80,9 +80,7 @@ impl Page<'_> {
         if r.width() < 200.0 || r.height() < 160.0 {
             return None;
         }
-        super::layout::surface(ui.painter(), r, &t);
-        // (behind the numbers the map would only be noise)
-        ui.painter().rect_filled(r, crate::theme::R_CARD, t.backdrop.gamma_multiply(0.9));
+        super::layout::surface_big(ui.painter(), r, &t);
         let _ = ui.interact(r, egui::Id::new((id, "bg")), Sense::click_and_drag());
         let painter = ui.painter().with_clip_rect(r);
         painter.text(pos2(r.left() + 20.0, r.top() + 28.0), Align2::LEFT_CENTER, crate::i18n::tr(title), t.semibold(16.0), t.text);

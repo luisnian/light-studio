@@ -96,6 +96,11 @@ pub(super) fn card_opacity(ctx: &egui::Context, id: &str, r: Rect, keep: bool) -
     rest + (1.0 - rest) * k
 }
 
+/// The surface of a big card (Find, Sky, calculations…): the same glass, more opaque.
+pub(super) fn surface_big(p: &egui::Painter, r: Rect, t: &Tokens) {
+    crate::theme::paint_card_big(p, r, t);
+}
+
 /// A floating panel's surface at the given opacity (0..1; 1 = as every card).
 pub(super) fn surface_with(p: &egui::Painter, r: Rect, t: &Tokens, k: f32) {
     crate::theme::paint_card(p, r, t, k);
