@@ -411,6 +411,10 @@ impl Page<'_> {
             if text_button(ui, "popupPlanCalendar", "Add to Calendar", false).clicked() {
                 self.intents.push(Intent::SendToCalendar(id));
             }
+            if text_button(ui, "popupPlanSheet", "Sheet", false).on_hover_text(crate::i18n::tr("A one-page sheet to read offline or print")).clicked()
+            {
+                self.intents.push(Intent::OpenSheet(id));
+            }
             if text_button(ui, "plannerPlanDirections", "Directions ↗", false).clicked() {
                 self.intents.push(Intent::OpenUrl(format!("https://maps.apple.com/?daddr={lat:.6},{lon:.6}")));
             }

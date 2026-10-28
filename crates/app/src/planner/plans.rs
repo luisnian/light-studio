@@ -66,7 +66,7 @@ impl Default for Plan {
 
 impl Plan {
     /// The planner as it was when the plan was kept (for working out its day).
-    fn state(&self, base: &PlannerState) -> PlannerState {
+    pub(super) fn state(&self, base: &PlannerState) -> PlannerState {
         let mut st = base.clone();
         st.lat = self.lat;
         st.lon = self.lon;
@@ -265,7 +265,7 @@ pub(super) fn ics(plan: &Plan, base: &PlannerState, now: f64) -> String {
 }
 
 /// A file name for the plan's event (letters, digits and dashes).
-fn ics_file_name(plan: &Plan) -> String {
+pub(super) fn ics_file_name(plan: &Plan) -> String {
     let base: String = plan
         .name
         .chars()

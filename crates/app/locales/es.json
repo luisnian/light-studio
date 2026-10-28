@@ -691,5 +691,17 @@
  "The Grid Covers": "La cuadrícula abarca",
  "Turn the camera about the lens, not the body, or near objects will not line up. With wide lenses and 30 % overlap the stitch usually finds enough to join.": "Gira la cámara sobre el objetivo, no sobre el cuerpo, o los objetos cercanos no encajarán. Con angulares y un 30 % de solape, el ensamblado suele encontrar suficiente para unir.",
  "That is a very large number of shots: try a wider lens or less overlap.": "Son muchísimos disparos: prueba un objetivo más ancho o menos solape.",
- "The camera needs a focal length and a sensor.": "La cámara necesita una focal y un sensor."
+ "The camera needs a focal length and a sensor.": "La cámara necesita una focal y un sensor.",
+ "Sheet": "Hoja",
+ "A one-page sheet to read offline or print": "Una hoja para leer sin conexión o imprimir",
+ "Times are local to the place,": "Las horas son locales del lugar,",
+ "The light that day": "La luz ese día",
+ "Framing": "Encuadre",
+ "Tilt": "Inclinación",
+ "Lens": "Objetivo",
+ "Shots to take": "Fotos por hacer",
+ "Print / Save as PDF": "Imprimir / Guardar como PDF",
+ "There is nowhere to write the sheet": "No hay dónde escribir la hoja",
+ "Sheet opened: print it or save it as PDF from the browser": "Hoja abierta: imprímela o guárdala como PDF desde el navegador",
+ "Sheet saved: {path}": "Hoja guardada: {path}"
 }

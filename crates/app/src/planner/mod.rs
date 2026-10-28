@@ -32,6 +32,7 @@ pub use pois::Gone;
 mod popup;
 mod saved;
 mod shade;
+mod sheet;
 mod skycal;
 mod skylayers;
 mod strip;
@@ -663,6 +664,8 @@ enum Intent {
     OpenSite(usize),
     OpenUrl(String),
     SendToCalendar(u64),
+    /// The one-page sheet of a plan, opened in the browser.
+    OpenSheet(u64),
     /// Switch every map between satellite and the plain map.
     ToggleSatellite,
     /// Put the place where this computer is (approximately, by IP address).
@@ -1286,6 +1289,7 @@ fn apply(app: &mut App, ctx: &egui::Context, intent: Intent) {
             }
         }
         Intent::SendToCalendar(id) => plans::send_to_calendar(app, ctx, id),
+        Intent::OpenSheet(id) => sheet::open_sheet(app, ctx, id),
         Intent::JumpTo(d) => {
             app.ui.planner.date = d.iso();
             app.ui.planner.minute = None;

@@ -12,7 +12,7 @@ const MAX_REFERENCES: usize = 1000;
 const MAX_TITLE: usize = 80;
 const MAX_RESULT: usize = 300;
 /// Plans within this distance of the place count as being for it (degrees, about 150 m).
-const NEAR_DEGREES: f64 = 0.0015;
+pub(super) const NEAR_DEGREES: f64 = 0.0015;
 
 /// A shot planned at a place.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
