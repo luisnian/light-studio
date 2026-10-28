@@ -459,6 +459,21 @@ impl Page<'_> {
         if !rt.found_label.is_empty() {
             note(ui, &rt.found_label.clone());
         }
+        match rt.clouds.as_ref().map(|(_, _, got)| got.as_ref().map(|c| c.until())) {
+            Some(Ok(until)) => {
+                let to = until.map_or_else(String::new, |u| short_date(Date::from_unix(u as f64, self.c.offset)));
+                note(
+                    ui,
+                    &format!(
+                        "{} {to}. {}",
+                        crate::i18n::tr("Clouds: weather-model forecast (Open-Meteo), only up to"),
+                        crate::i18n::tr("It is not part of the astronomy.")
+                    ),
+                );
+            }
+            Some(Err(_)) => note(ui, crate::i18n::tr("The cloud forecast could not be loaded.")),
+            None => {}
+        }
         if hits.is_empty() {
             ui.add_space(4.0);
             note(ui, crate::i18n::tr("It is never there in those days. Try a wider tolerance."));
@@ -506,6 +521,13 @@ impl Page<'_> {
         ];
         if moon {
             heads.push((SORT_PHASE, cols.phase, cols.phase + 120.0, "Phase", Align2::LEFT_CENTER));
+        }
+        // (the cloud forecast, when it has come: not a sort key)
+        let clouds = rt.clouds.as_ref().filter(|(k, ..)| *k == ((st.lat * 100.0).round() as i32, (st.lon * 100.0).round() as i32));
+        let clouds = clouds.and_then(|(_, _, got)| got.as_ref().ok().cloned());
+        let cloud_x = head.right() - 8.0;
+        if clouds.is_some() && head.width() > 520.0 {
+            ui.painter().text(pos2(cloud_x, head.center().y), Align2::RIGHT_CENTER, crate::i18n::tr("Clouds"), t.font(10.5), t.text_dim);
         }
         for (key, x0, x1, text, align) in heads {
             let hr = Rect::from_min_max(pos2(x0.min(x1) - 2.0, head.top()), pos2(x1 + 2.0, head.bottom()));
@@ -562,6 +584,10 @@ impl Page<'_> {
             });
             let resp = resp.on_hover_text(explain(h, body, moon));
             self.find_row(ui, st, h, cell, &cols, moon, rt.found_core, (lit, shade));
+            if let Some(c) = clouds.as_ref().filter(|_| cell.width() > 520.0) {
+                let text = c.at(h.unix).map_or_else(|| "—".to_string(), |v| format!("{v:.0} %"));
+                ui.painter().text(pos2(cell.right() - 8.0, cell.center().y), Align2::RIGHT_CENTER, text, t.font(12.0), t.text);
+            }
             if resp.clicked() {
                 super::strip::jump_to(st, h.unix, self.c.offset);
                 rt.find_open = false;
@@ -639,6 +665,36 @@ impl Page<'_> {
             p.circle_stroke(c, 8.0, Stroke::new(1.0, Color32::BLACK.gamma_multiply(0.6)));
             p.text(pos2(swatch.right() + 10.0, y), Align2::LEFT_CENTER, crate::i18n::tr(light_name(sun_alt)), t.font(11.5), t.text_dim);
         }
+    }
+}
+
+/// The cloud forecast is asked for the place while the card is open; the answer is reused for an hour (a failure for ten minutes).
+pub(super) fn ask_clouds(app: &mut crate::App) {
+    if cfg!(test) || !app.planner.find_open || app.planner.clouds_pending || !app.ui.planner.placed {
+        return;
+    }
+    let (lat, lon) = (app.ui.planner.lat, app.ui.planner.lon);
+    let key = ((lat * 100.0).round() as i32, (lon * 100.0).round() as i32);
+    let now = now_unix();
+    if let Some((k, at, got)) = &app.planner.clouds
+        && *k == key
+        && now - at < if got.is_ok() { 3600.0 } else { 600.0 }
+    {
+        return;
+    }
+    app.planner.clouds_pending = true;
+    let started = crate::tasks::spawn(
+        app,
+        "Finding the cloud forecast",
+        None,
+        move || crate::services::forecast::fetch(lat, lon),
+        move |app, _ctx, got| {
+            app.planner.clouds_pending = false;
+            app.planner.clouds = Some((key, now_unix(), got.map(std::sync::Arc::new)));
+        },
+    );
+    if started.is_err() {
+        app.planner.clouds_pending = false;
     }
 }
 

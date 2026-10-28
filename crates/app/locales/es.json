@@ -674,5 +674,10 @@
  "A search over the skyline cannot be saved: it needs the terrain": "Una búsqueda sobre la silueta no se puede guardar: necesita el terreno",
  "checking…": "comprobando…",
  "none in the next": "ninguna en los próximos",
- "Checking saved searches": "Comprobando búsquedas guardadas"
+ "Checking saved searches": "Comprobando búsquedas guardadas",
+ "Clouds": "Nubes",
+ "Clouds: weather-model forecast (Open-Meteo), only up to": "Nubes: previsión del modelo meteorológico (Open-Meteo), solo hasta el",
+ "It is not part of the astronomy.": "No forma parte del cálculo astronómico.",
+ "The cloud forecast could not be loaded.": "No se pudo cargar la previsión de nubes.",
+ "Finding the cloud forecast": "Buscando la previsión de nubes"
 }

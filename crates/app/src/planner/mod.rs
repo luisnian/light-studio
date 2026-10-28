@@ -548,6 +548,9 @@ pub struct Runtime {
     /// The next date of each saved search, by what it was worked out for, and whether a check is running.
     saved_next: Option<(u64, Vec<Option<f64>>)>,
     saved_next_pending: bool,
+    /// The cloud forecast for the place of the Find card: the place (rounded), when it was asked, and the answer.
+    clouds: Option<((i32, i32), f64, Result<std::sync::Arc<crate::services::forecast::Clouds>, String>)>,
+    clouds_pending: bool,
     /// Run the Find card's search with the conditions just loaded (a saved search was chosen).
     find_load: bool,
     find_reach: Option<((u8, u64, u64, u64, u32), Box<[bool; 360]>)>,
@@ -945,6 +948,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let c = refresh(&app.ui.planner, &mut app.planner, now);
     zone::ask(app, ui.ctx());
     saved::refresh(app);
+    find::ask_clouds(app);
     let obs = observer(&app.ui.planner);
     let minute = cursor_minute(&app.ui.planner, &c, now);
     let at = c.start + minute * 60.0;
@@ -2132,6 +2136,36 @@ mod tests {
             }
             assert!(app.planner.find_open, "the card stays open");
         }
+    }
+
+    #[test]
+    fn the_results_show_the_cloud_forecast_only_where_it_covers() {
+        let mut app = new_app();
+        app.ui.planner = PlannerState { placed: true, lat: 43.3, lon: -2.0, date: "2024-07-14".into(), ..Default::default() };
+        let start = light_studio_astro::time::unix_from_civil(2024, 7, 14, 0, 0, 0);
+        let hits = light_studio_astro::search::find_with(
+            light_studio_astro::search::Target::Sun,
+            light_studio_astro::Observer::new(43.3, -2.0),
+            start,
+            30,
+            90.0,
+            None,
+            30.0,
+            Default::default(),
+        );
+        assert!(!hits.is_empty());
+        let t0 = hits[0].unix.round() as i64;
+        let json = format!(r#"{{"hourly":{{"time":[{},{}],"cloud_cover":[35,null]}}}}"#, t0, t0 + 3600);
+        let clouds = crate::services::forecast::parse(&json).unwrap();
+        assert_eq!(clouds.at(hits[0].unix), Some(35.0));
+        assert_eq!(clouds.at(hits[hits.len() - 1].unix), if hits.len() == 1 { Some(35.0) } else { None });
+        app.planner.found_dates = Some(hits);
+        app.planner.clouds =
+            Some((((43.3f64 * 100.0).round() as i32, (-2.0f64 * 100.0).round() as i32), now_unix(), Ok(std::sync::Arc::new(clouds))));
+        app.planner.find_open = true;
+        draw(&mut app, vec2(1600.0, 1000.0));
+        app.planner.clouds = Some(((0, 0), now_unix(), Err("offline".into())));
+        draw(&mut app, vec2(1600.0, 1000.0));
     }
 
     #[test]
