@@ -96,7 +96,6 @@ pub(super) fn html(plan: &Plan, base: &PlannerState, now: f64) -> String {
     if let Some(f) = &plan.frame {
         let sensor = SENSORS.get(f.sensor).map_or("", |s| s.name);
         shot.push((tr("Direction"), format!("{:.0}°", f.az)));
-        shot.push((tr("Tilt"), format!("{:.0}°", f.alt)));
         shot.push((tr("Lens"), format!("{:.0} mm · {} · {sensor}", f.focal, tr(if f.portrait { "portrait" } else { "landscape" }))));
     }
     if let Some(s) = sight_of(&st, None) {
@@ -198,8 +197,8 @@ pub(super) fn open_sheet(app: &mut App, ctx: &egui::Context, id: u64) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::framing::FrameShot;
     use super::super::notebook::Shot;
-    use super::super::viewfinder::FrameShot;
     use super::*;
 
     fn plan() -> Plan {
@@ -213,7 +212,7 @@ mod tests {
             minute: 19.0 * 60.0 + 5.0,
             utc_offset: Some(120),
             notes: "Trípode\n<script>alert(1)</script>".into(),
-            frame: Some(FrameShot { az: 285.0, alt: 3.0, focal: 24.0, portrait: false, sensor: 6 }),
+            frame: Some(FrameShot { az: 285.0, focal: 24.0, portrait: false, sensor: 6 }),
             ..Plan::default()
         }
     }

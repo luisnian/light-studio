@@ -173,7 +173,7 @@ impl Page<'_> {
             }
             if text_button(ui, "plannerSiteTarget", "Use as Target", false).clicked() {
                 st.target = Some([lat, lon]);
-                st.tab = Tab::Align;
+                super::bigcard::open_only(rt, super::bigcard::Card::Align);
             }
             if text_button(ui, "plannerSiteDirections", "Directions ↗", false).clicked() {
                 self.intents.push(Intent::OpenUrl(format!("https://maps.apple.com/?daddr={lat:.6},{lon:.6}")));

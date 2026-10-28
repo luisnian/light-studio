@@ -3,7 +3,6 @@
 //! (Sun, Moon, Night, Line Up, Calendar, Sites, Calculations) and, along the bottom, the time bar: the day, the
 //! time and a strip with the Sun's and the Moon's height over the day to drag the time along.
 
-use super::skycal::SkyMode;
 use super::*;
 
 /// Space around the floating panels.
@@ -20,8 +19,8 @@ const TIME_W: f32 = 640.0;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Tab {
-    Info,
     #[default]
+    Info,
     Sun,
     Moon,
     Night,
@@ -189,7 +188,7 @@ impl Page<'_> {
         ui.set_clip_rect(r.shrink(1.0));
         self.side_head(&mut ui, st, rt);
         ui.add_space(8.0);
-        self.tabs(&mut ui, st, rt);
+        self.tabs(&mut ui, rt);
         let pane = Rect::from_min_max(pos2(r.left() + 1.0, ui.cursor().top()), r.max - vec2(1.0, 1.0));
         let mut pane_ui = ui.new_child(egui::UiBuilder::new().max_rect(pane).layout(egui::Layout::top_down(Align::Min)));
         let tab = st.tab;
@@ -264,25 +263,19 @@ impl Page<'_> {
     }
 
     /// The tab strip: names with a line under the one shown.
-    fn tabs(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime) {
+    fn tabs(&mut self, ui: &mut Ui, rt: &mut Runtime) {
         let t = self.t;
         let w = ui.available_width();
         let (row, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
         let shown: Vec<&(Tab, &str, &str)> = TABS.iter().filter(|(tab, _, _)| !matches!(tab, Tab::Moon | Tab::Night | Tab::Calendar)).collect();
-        let sky = matches!(st.tab, Tab::Sun | Tab::Moon | Tab::Night | Tab::Calendar);
-        let current = st.tab;
-        let calc_open = rt.calc_open;
-        let find_open = rt.find_open;
-        let is_on = move |tab: Tab| {
-            if tab == Tab::Sun {
-                sky
-            } else if tab == Tab::Tools {
-                calc_open
-            } else if tab == Tab::Find {
-                find_open
-            } else {
-                current == tab
-            }
+        let (sky_open, align_open, calc_open, find_open) = (rt.sky_open, rt.align_open, rt.calc_open, rt.find_open);
+        let none_open = !(sky_open || align_open || calc_open || find_open);
+        let is_on = move |tab: Tab| match tab {
+            Tab::Sun => sky_open,
+            Tab::Align => align_open,
+            Tab::Tools => calc_open,
+            Tab::Find => find_open,
+            _ => none_open,
         };
         // icons only (the name shows on hover): the strip stays quiet now that a menu picks the map mode
         let cell_w = w / shown.len().max(1) as f32;
@@ -311,26 +304,15 @@ impl Page<'_> {
             if on {
                 active_x = Some(cell.center().x);
             }
-            if resp.clicked() && tab == Tab::Tools {
-                // the calculations open in a card of their own, centred over the map
-                rt.calc_open = !rt.calc_open;
-                if rt.calc_open {
-                    rt.find_open = false;
-                    rt.site_open = None;
-                    rt.plan_popup = None;
-                    rt.edit_of = None;
+            if resp.clicked() {
+                // Sky, Line Up, Find and the calculations each open in a card of their own, centred over the map
+                match tab {
+                    Tab::Sun => super::bigcard::toggle(rt, super::bigcard::Card::Sky),
+                    Tab::Align => super::bigcard::toggle(rt, super::bigcard::Card::Align),
+                    Tab::Tools => super::bigcard::toggle(rt, super::bigcard::Card::Calc),
+                    Tab::Find => super::bigcard::toggle(rt, super::bigcard::Card::Find),
+                    _ => super::bigcard::toggle_off(rt),
                 }
-            } else if resp.clicked() && tab == Tab::Find {
-                // the search opens in a card of its own too
-                rt.find_open = !rt.find_open;
-                if rt.find_open {
-                    rt.calc_open = false;
-                    rt.site_open = None;
-                    rt.plan_popup = None;
-                    rt.edit_of = None;
-                }
-            } else if resp.clicked() && !on {
-                st.tab = tab;
             }
         }
         // the underline slides to the tab shown
@@ -344,52 +326,9 @@ impl Page<'_> {
 
     fn pane(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, tab: Tab) {
         match tab {
-            Tab::Info => self.info_panel(ui, st),
-            Tab::Sun => {
-                self.sky_menu(ui, st, rt);
-                self.now_grid(ui, st);
-                let sun = self.skies.sun;
-                let shadow = match light_studio_astro::align::shadow(1.0, sun) {
-                    Some((k, az)) => crate::i18n::tr("{k}× the object's height, towards {d}")
-                        .replace("{k}", &format!("{k:.1}"))
-                        .replace("{d}", crate::i18n::tr_ctx("compass", compass(az))),
-                    None => crate::i18n::tr("no sun").to_string(),
-                };
-                ui.add_space(4.0);
-                row(ui, "sun:shadow", "Shadows", &shadow, Some(Color32::from_gray(125)));
-                ui.add_space(8.0);
-                self.sun_card(ui);
-                subhead(ui, "Sun Calendar");
-                self.sky_calendar(ui, SkyMode::Sun, rt);
-                self.sun_facts(ui);
-                subhead(ui, "Sky");
-                self.dial_card(ui);
-            }
-            Tab::Moon => {
-                self.sky_menu(ui, st, rt);
-                self.moon_card(ui, st);
-                subhead(ui, "Moon Calendar");
-                self.sky_calendar(ui, SkyMode::Moon, rt);
-                self.moon_facts(ui, rt);
-            }
-            Tab::Night => {
-                self.sky_menu(ui, st, rt);
-                self.core_card(ui);
-                subhead(ui, "Night Calendar");
-                self.sky_calendar(ui, SkyMode::Night, rt);
-                subhead(ui, "Milky Way Calendar");
-                self.year_card(ui, st);
-                subhead(ui, "Meteor Showers");
-                self.showers_card(ui);
-                subhead(ui, "Eclipses");
-                self.eclipses_card(ui, st, rt);
-            }
-            Tab::Align => self.align_card(ui, st, rt),
-            Tab::Calendar => {
-                self.sky_menu(ui, st, rt);
-                subhead(ui, "Milky Way Calendar");
-                self.year_card(ui, st);
-            }
+            // (the Sky and Line Up cards have their own place over the map now; a saved layout that still names one of
+            // their tabs shows Information)
+            Tab::Info | Tab::Sun | Tab::Moon | Tab::Night | Tab::Calendar | Tab::Align => self.info_panel(ui, st),
             // (the old POIs tab: records are made from the map's menu now; a saved layout that still names it shows Information)
             Tab::Sites => {
                 st.tab = Tab::Info;
@@ -417,7 +356,7 @@ impl Page<'_> {
 
     /// Where the Sun, the Moon and the core are at the time shown, side by side; a click hides or shows each on the map
     /// and the strip.
-    fn now_grid(&mut self, ui: &mut Ui, st: &mut PlannerState) {
+    pub(super) fn now_grid(&mut self, ui: &mut Ui, st: &mut PlannerState) {
         let t = self.t;
         let pal = self.pal;
         let w = ui.available_width();

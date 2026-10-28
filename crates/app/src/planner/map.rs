@@ -391,13 +391,6 @@ impl Page<'_> {
                 if crate::widgets::icon_button_grow(&mut child, "plannerMapCamera", Icon::Crop, sz, st.cam_tool > 0, true, tip).clicked() {
                     st.cam_tool = (st.cam_tool + 1) % 3;
                 }
-                let tip = if st.show_viewfinder { "Hide the Viewfinder" } else { "Show the Viewfinder" };
-                if crate::widgets::icon_button_grow(&mut child, "plannerMapViewfinder", Icon::Eye, sz, st.show_viewfinder, true, tip).clicked() {
-                    st.show_viewfinder = !st.show_viewfinder;
-                    if st.show_viewfinder && st.cam_tool == 0 {
-                        st.cam_tool = 1;
-                    }
-                }
                 if crate::widgets::icon_button_grow(&mut child, "plannerMapLayers", Icon::Sliders, sz, rt.layers_open, true, "Map Layers").clicked() {
                     rt.layers_open = !rt.layers_open;
                 }

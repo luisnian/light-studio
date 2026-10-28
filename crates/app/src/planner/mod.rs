@@ -9,6 +9,7 @@
 //!   and longitude. The UTC offset is guessed for the place and can be set by hand.
 //! - All the sums live in [`light_studio_astro`]; this module only draws them.
 
+mod bigcard;
 mod bodies;
 mod calc;
 mod camtool;
@@ -16,6 +17,7 @@ mod compass;
 mod coords;
 mod eclipses;
 mod find;
+mod framing;
 mod horizon;
 mod infopanel;
 mod layout;
@@ -27,7 +29,6 @@ mod phone;
 mod places;
 mod plans;
 mod pois;
-mod viewfinder;
 pub use pois::Gone;
 mod popup;
 mod saved;
@@ -236,10 +237,6 @@ pub struct PlannerState {
     /// (azimuth, degrees); and whether it is held upright.
     pub cam_tool: u8,
     pub cam_az: f64,
-    /// The camera's tilt above the horizon (degrees), the viewfinder showing, and the focal lengths laid over it (bits of `COMPARE`).
-    pub cam_alt: f64,
-    pub show_viewfinder: bool,
-    pub vf_compare: u16,
     pub portrait: bool,
     /// A click on the planner's map sets the target (the target button), not the place.
     #[serde(skip)]
@@ -351,7 +348,7 @@ impl Default for PlannerState {
             open_plan: None,
             alarm: 60,
             target_mode: false,
-            tab: Tab::Sun,
+            tab: Tab::Info,
             pdi_cursor: String::new(),
             pdi_deleted: Vec::new(),
             panel_hidden: false,
@@ -396,9 +393,6 @@ impl Default for PlannerState {
             stars_px: 1.0,
             cam_tool: 0,
             cam_az: 90.0,
-            cam_alt: 0.0,
-            show_viewfinder: false,
-            vf_compare: 0,
             portrait: false,
         }
     }
@@ -471,8 +465,6 @@ impl PlannerState {
         self.subject_m = clamp(self.subject_m, 0.001, 10_000.0, d.subject_m);
         self.stars_px = clamp(self.stars_px, 0.1, 50.0, d.stars_px);
         self.cam_az = clamp(self.cam_az, 0.0, 360.0, d.cam_az);
-        self.cam_alt = clamp(self.cam_alt, -60.0, 80.0, d.cam_alt);
-        self.vf_compare &= 0x00ff;
         self.cam_tool = self.cam_tool.min(2);
         if self.to_sensor >= SENSORS.len() {
             self.to_sensor = d.to_sensor;
@@ -584,8 +576,9 @@ pub struct Runtime {
     year_phases: Option<((i32, i32), Vec<(f64, Principal)>)>,
     /// The year and month the calendar was last scrolled to.
     cal_scrolled: Option<(i32, u32)>,
-    /// Whether the Sun / Moon / Night menu is open.
-    sky_menu: bool,
+    /// Whether the Sky card and the Line Up card are open over the map.
+    sky_open: bool,
+    align_open: bool,
     /// Whether the calculations card (exposure and focus, time-lapse, filters, star trails) is open over the map.
     calc_open: bool,
     /// Whether the Find card (the Sun or the Moon at a direction) is open over the map, the zoom of its mini-map, and what the
@@ -1096,8 +1089,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let mut front =
         ui.new_child(egui::UiBuilder::new().layer_id(egui::LayerId::new(egui::Order::Middle, egui::Id::new("planner-record-popup"))).max_rect(full));
     page.record_popup(&mut front, st, rt, areas.free);
-    page.viewfinder(&mut front, st, rt, areas.free);
     page.calc_popup(&mut front, st, rt, areas.free);
+    page.sky_popup(&mut front, st, rt, areas.free);
+    page.align_popup(&mut front, st, rt, areas.free);
     page.find_popup(&mut front, st, rt, areas.free);
 
     for intent in intents {
@@ -2203,6 +2197,30 @@ mod tests {
     }
 
     #[test]
+    fn the_sky_and_line_up_cards_open_one_at_a_time_and_draw_at_any_size() {
+        use bigcard::{Card, toggle};
+        let mut rt = Runtime::default();
+        toggle(&mut rt, Card::Sky);
+        assert!(rt.sky_open && !rt.find_open);
+        toggle(&mut rt, Card::Find);
+        assert!(rt.find_open && !rt.sky_open);
+        toggle(&mut rt, Card::Find);
+        assert!(!(rt.find_open || rt.sky_open || rt.align_open || rt.calc_open));
+        for tab in [Tab::Sun, Tab::Moon, Tab::Night, Tab::Calendar, Tab::Info] {
+            for target in [None, Some([43.4, -1.8])] {
+                let mut app = new_app();
+                app.ui.planner = PlannerState { placed: true, tab, target, target_height: 30.0, ..Default::default() };
+                for card in [Card::Sky, Card::Align] {
+                    bigcard::open_only(&mut app.planner, card);
+                    for size in [vec2(300.0, 400.0), vec2(1000.0, 700.0), vec2(1900.0, 1000.0)] {
+                        draw(&mut app, size);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn saved_searches_draw_and_load() {
         let mut app = new_app();
         let spec = saved::Spec { az: 120.0, tol: 5.0, ..Default::default() };
@@ -2219,39 +2237,6 @@ mod tests {
     }
 
     #[test]
-    fn the_viewfinder_draws_at_any_size_and_framing() {
-        for (az, alt, focal, portrait, compare) in [
-            (90.0, 0.0, 24.0, false, 0b0000_0000),
-            (270.0, 75.0, 14.0, true, 0b1111_1111),
-            (0.0, -60.0, 400.0, false, 0b0000_0101),
-            (f64::NAN, f64::INFINITY, -5.0, true, 0xffff),
-        ] {
-            for (lat, date) in [(43.3, "2024-07-14"), (80.0, "2024-12-21"), (-33.9, "2024-12-21")] {
-                let mut app = new_app();
-                app.ui.planner = PlannerState {
-                    lat,
-                    lon: -2.0,
-                    date: date.into(),
-                    placed: true,
-                    show_viewfinder: true,
-                    cam_tool: 1,
-                    cam_az: az,
-                    cam_alt: alt,
-                    focal,
-                    portrait,
-                    vf_compare: compare,
-                    ..Default::default()
-                };
-                for size in [vec2(300.0, 400.0), vec2(1000.0, 800.0), vec2(1800.0, 1400.0)] {
-                    draw(&mut app, size);
-                }
-                let st = &app.ui.planner;
-                assert!(st.cam_az.is_finite() && st.cam_alt.is_finite() && st.focal >= 1.0 && st.vf_compare <= 0xff, "{st:?}");
-            }
-        }
-    }
-
-    #[test]
     fn a_record_with_a_notebook_draws_read_and_written() {
         for editing in [false, true] {
             let mut app = new_app();
@@ -2260,7 +2245,7 @@ mod tests {
             site.notebook.access = "aparcar en el puerto".into();
             site.notebook.references = "IMG_1.CR2\nhttps://example.org".into();
             site.notebook.shots = vec![
-                notebook::Shot { title: "Luna sobre el faro".into(), frame: Some(viewfinder::FrameShot::default()), ..Default::default() },
+                notebook::Shot { title: "Luna sobre el faro".into(), frame: Some(framing::FrameShot::default()), ..Default::default() },
                 notebook::Shot {
                     title: "Mar sedoso".into(),
                     done: true,
@@ -2287,9 +2272,8 @@ mod tests {
     #[test]
     fn a_plan_keeps_the_framing_and_brings_it_back() {
         let mut app = new_app();
-        app.ui.planner =
-            PlannerState { show_viewfinder: true, cam_az: 200.0, cam_alt: 8.0, focal: 85.0, portrait: true, placed: true, ..Default::default() };
-        let plan = plans::Plan { id: 7, frame: Some(viewfinder::FrameShot::of(&app.ui.planner)), ..Default::default() };
+        app.ui.planner = PlannerState { cam_tool: 1, cam_az: 200.0, focal: 85.0, portrait: true, placed: true, ..Default::default() };
+        let plan = plans::Plan { id: 7, frame: Some(framing::FrameShot::of(&app.ui.planner)), ..Default::default() };
         let json = serde_json::to_string(&plan).expect("serialises");
         let back: plans::Plan = serde_json::from_str(&json).expect("reads");
         assert_eq!(back.frame, plan.frame);
@@ -2297,11 +2281,11 @@ mod tests {
         let old: plans::Plan = serde_json::from_str(r#"{"id": 3, "name": "x"}"#).expect("reads");
         assert!(old.frame.is_none());
         app.ui.planner.plans = vec![back];
-        app.ui.planner.show_viewfinder = false;
+        app.ui.planner.cam_tool = 0;
         app.ui.planner.cam_az = 0.0;
         assert!(plans::open_plan(&mut app, 7));
         let st = &app.ui.planner;
-        assert_eq!((st.cam_az, st.cam_alt, st.focal, st.portrait, st.show_viewfinder), (200.0, 8.0, 85.0, true, true));
+        assert_eq!((st.cam_az, st.focal, st.portrait, st.cam_tool), (200.0, 85.0, true, 1));
     }
 
     #[test]

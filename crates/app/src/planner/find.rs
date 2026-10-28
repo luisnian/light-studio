@@ -186,7 +186,7 @@ impl Page<'_> {
         // the mini-map, north up, round the place, with the direction as a wedge; the elevation gauge beside it
         let w = ui.available_width();
         let gauge_w = 30.0;
-        let (area, _) = ui.allocate_exact_size(vec2(w, (column_h - 250.0).clamp(220.0, 1200.0)), Sense::hover());
+        let (area, _) = ui.allocate_exact_size(vec2(w, (column_h - 520.0).clamp(160.0, 1200.0)), Sense::hover());
         let map = Rect::from_min_max(area.min, pos2(area.right() - gauge_w - 8.0, area.bottom()));
         let gauge = Rect::from_min_max(pos2(area.right() - gauge_w, area.top()), area.max);
         if rt.find_zoom < MIN_ZOOM {

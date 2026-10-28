@@ -25,8 +25,6 @@ pub(super) enum SkyMode {
     Night,
 }
 
-pub(super) const MODES: [SkyMode; 3] = [SkyMode::Sun, SkyMode::Moon, SkyMode::Night];
-
 impl SkyMode {
     /// The mode a tab belongs to (the Milky Way calendar lives with the night).
     pub(super) fn of(tab: Tab) -> SkyMode {
@@ -42,14 +40,6 @@ impl SkyMode {
             SkyMode::Sun => Tab::Sun,
             SkyMode::Moon => Tab::Moon,
             SkyMode::Night => Tab::Night,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            SkyMode::Sun => "Sun",
-            SkyMode::Moon => "Moon",
-            SkyMode::Night => "Night",
         }
     }
 }
@@ -96,70 +86,6 @@ fn night_figures(n: &NightProfile) -> (f64, f64) {
 }
 
 impl Page<'_> {
-    /// The Sun / Moon / Night menu: a closed row with the mode's icon, its name and a chevron; open, the three choices.
-    pub(super) fn sky_menu(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime) {
-        let t = self.t;
-        let mode = SkyMode::of(st.tab);
-        let w = ui.available_width();
-        let (row, resp) = ui.allocate_exact_size(vec2(w, 40.0), Sense::click());
-        let p = ui.painter();
-        p.rect_filled(row, R_CONTROL + 2.0, t.inset);
-        let edge = if rt.sky_menu || resp.hovered() { t.accent } else { t.field_border };
-        p.rect_stroke(row, R_CONTROL + 2.0, Stroke::new(1.5, edge), StrokeKind::Inside);
-        self.sky_icon(p, pos2(row.left() + 24.0, row.center().y), 11.0, mode);
-        p.text(pos2(row.left() + 48.0, row.center().y), Align2::LEFT_CENTER, crate::i18n::tr(mode.label()), t.font(14.0), t.text);
-        crate::icons::paint(p, Rect::from_center_size(pos2(row.right() - 18.0, row.center().y), vec2(13.0, 13.0)), Icon::ChevronDown, t.text_dim);
-        if resp.clicked() {
-            rt.sky_menu = !rt.sky_menu;
-        }
-        if rt.sky_menu {
-            ui.add_space(2.0);
-            for m in MODES {
-                let (r, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
-                let p = ui.painter();
-                if m == mode {
-                    p.rect_filled(r, R_CONTROL, t.tool_active);
-                } else if resp.hovered() {
-                    p.rect_filled(r, R_CONTROL, t.hover.gamma_multiply(0.6));
-                }
-                self.sky_icon(p, pos2(r.left() + 24.0, r.center().y), 9.5, m);
-                p.text(pos2(r.left() + 48.0, r.center().y), Align2::LEFT_CENTER, crate::i18n::tr(m.label()), t.font(13.0), t.text);
-                if resp.clicked() {
-                    st.tab = m.tab();
-                    rt.sky_menu = false;
-                }
-            }
-        }
-        ui.add_space(8.0);
-    }
-
-    /// The mode's icon: a sun with rays, the Moon as it stands, or a dark disc with stars.
-    fn sky_icon(&self, p: &egui::Painter, c: Pos2, r: f32, mode: SkyMode) {
-        let t = self.t;
-        match mode {
-            SkyMode::Sun => {
-                p.circle_filled(c, r * 0.55, self.pal.sun);
-                for k in 0..8 {
-                    let a = k as f32 * std::f32::consts::FRAC_PI_4;
-                    let (s, co) = a.sin_cos();
-                    p.line_segment([c + vec2(co, s) * r * 0.8, c + vec2(co, s) * r * 1.05], Stroke::new(1.4, self.pal.sun));
-                }
-            }
-            SkyMode::Moon => {
-                let (lit, shade) = moon_colors(true, self.pal, t.inset);
-                let phase = moon_phase(self.now);
-                moon_disc(p, c, r, phase.elongation, self.obs.lat < 0.0, lit, shade, t.divider);
-            }
-            SkyMode::Night => {
-                p.circle_filled(c, r, Color32::from_rgb(10, 12, 24));
-                p.circle_stroke(c, r, Stroke::new(1.0, t.divider));
-                for (dx, dy, s) in [(-0.35f32, -0.3f32, 1.3f32), (0.3, -0.05, 1.0), (-0.05, 0.4, 1.1)] {
-                    p.circle_filled(c + vec2(dx, dy) * r, s, Color32::from_gray(225));
-                }
-            }
-        }
-    }
-
     /// The year of the day shown: a header (year, paging, back to today) and the months in a scrolling window.
     pub(super) fn sky_calendar(&mut self, ui: &mut Ui, mode: SkyMode, rt: &mut Runtime) {
         let t = self.t;
@@ -408,7 +334,7 @@ mod tests {
         assert_eq!(SkyMode::of(Tab::Moon), SkyMode::Moon);
         assert_eq!(SkyMode::of(Tab::Night), SkyMode::Night);
         assert_eq!(SkyMode::of(Tab::Calendar), SkyMode::Night, "the Milky Way calendar lives with the night");
-        for m in MODES {
+        for m in [SkyMode::Sun, SkyMode::Moon, SkyMode::Night] {
             assert_eq!(SkyMode::of(m.tab()), m);
         }
     }

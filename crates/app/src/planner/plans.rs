@@ -40,8 +40,8 @@ pub struct Plan {
     pub notes: String,
     /// Remind this many minutes before (0: no reminder).
     pub alarm: u32,
-    /// How the shot is framed (direction, tilt, focal length), when it was kept with the viewfinder showing.
-    pub frame: Option<super::viewfinder::FrameShot>,
+    /// How the shot is framed (direction, tilt, focal length), when it was kept with the camera shown on the map.
+    pub frame: Option<super::framing::FrameShot>,
 }
 
 impl Default for Plan {
@@ -340,7 +340,7 @@ impl Page<'_> {
             target_height: st.target_height,
             notes: String::new(),
             alarm: st.alarm,
-            frame: st.show_viewfinder.then(|| super::viewfinder::FrameShot::of(st)),
+            frame: (st.cam_tool > 0).then(|| super::framing::FrameShot::of(st)),
         };
         plan.tidy();
         st.open_plan = Some(plan.id);

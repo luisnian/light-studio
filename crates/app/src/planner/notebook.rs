@@ -3,7 +3,7 @@
 //! (kept from the viewfinder), whether it has been taken and where the result is. It belongs to the point of interest
 //! and stays on this computer: the phone's sync format has no room for it, so a sync never touches it.
 
-use super::viewfinder::FrameShot;
+use super::framing::FrameShot;
 use super::*;
 
 pub(super) const MAX_SHOTS: usize = 30;
@@ -68,10 +68,10 @@ impl Notebook {
             cut(&mut s.done_on, 10);
             cut(&mut s.result, MAX_RESULT);
             if let Some(f) = &mut s.frame {
-                // the numbers of a framing read from a file are brought into range as the viewfinder would
+                // the numbers of a framing read from a file are brought into range
                 let mut st = PlannerState::default();
                 f.apply(&mut st);
-                *f = FrameShot { az: st.cam_az, alt: st.cam_alt, focal: st.focal, portrait: st.portrait, sensor: st.sensor };
+                *f = FrameShot::of(&st);
             }
         }
     }
@@ -92,16 +92,9 @@ impl Notebook {
     }
 }
 
-/// "285° · tilt 3° · 24 mm · landscape".
+/// "285° · 24 mm · landscape".
 fn frame_summary(f: &FrameShot) -> String {
-    format!(
-        "{:.0}° · {} {:.0}° · {:.0} mm · {}",
-        f.az,
-        crate::i18n::tr("tilt"),
-        f.alt,
-        f.focal,
-        crate::i18n::tr(if f.portrait { "portrait" } else { "landscape" })
-    )
+    format!("{:.0}° · {:.0} mm · {}", f.az, f.focal, crate::i18n::tr(if f.portrait { "portrait" } else { "landscape" }))
 }
 
 /// What the notebook UI asks the page to do once the record's borrow is over.
@@ -292,7 +285,7 @@ mod tests {
                 .map(|n| Shot {
                     title: "t".repeat(500),
                     done_on: "9999999999999".into(),
-                    frame: Some(FrameShot { az: f64::NAN, alt: 900.0, focal: -1.0, portrait: false, sensor: 77 }),
+                    frame: Some(FrameShot { az: f64::NAN, focal: -1.0, portrait: false, sensor: 77 }),
                     result: format!("{n}").repeat(500),
                     ..Default::default()
                 })
@@ -302,7 +295,7 @@ mod tests {
         nb.tidy();
         assert_eq!((nb.access.chars().count(), nb.references.chars().count(), nb.shots.len()), (MAX_TEXT, MAX_REFERENCES, MAX_SHOTS));
         let f = nb.shots[0].frame.expect("kept");
-        assert!(f.az.is_finite() && f.alt <= 80.0 && f.focal >= 1.0 && f.sensor < SENSORS.len());
+        assert!(f.az.is_finite() && f.focal >= 1.0 && f.sensor < SENSORS.len());
         assert!(nb.shots.iter().all(|s| s.title.chars().count() <= MAX_TITLE && s.done_on.chars().count() <= 10));
     }
 

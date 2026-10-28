@@ -74,12 +74,16 @@ pub(super) fn fetch_terrain(app: &mut App) {
 }
 
 impl Page<'_> {
-    pub(super) fn align_card(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime) {
+    /// Line up: `part` 0 is the target's numbers, 1 the terrain and the dates, 2 both (one under the other).
+    pub(super) fn align_card(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, part: u8) {
         let t = self.t;
         let pal = self.pal;
         let c = self.c;
         let ground = ground_ends(st, rt);
         let Some(s) = plans::sight_of(st, ground) else {
+            if part == 1 {
+                return;
+            }
             note(
                 ui,
                 crate::i18n::tr(
@@ -96,42 +100,47 @@ impl Page<'_> {
             None if pending => crate::i18n::tr("looking up…").to_string(),
             None => "—".to_string(),
         };
-        subhead(ui, "From the Camera to the Target");
-        row(ui, "align:distance", "Distance", &plans::distance_label(s.distance), None);
-        row(ui, "align:azimuth", "Direction", &az_text(s.azimuth), None);
-        row(ui, "align:groundCamera", "Ground at the camera", &height_text(ground.map(|g| g.0)), None);
-        row(ui, "align:groundTarget", "Ground at the target", &height_text(ground.map(|g| g.1)), None);
-        if labelled_number(ui, rt, "targetHeight", "Object height (m)", &mut st.target_height, (0.0, 9000.0), 0) {
-            rt.align = None;
-        }
-        row(ui, "align:altitude", "Angle to the top", &alt_text(s.altitude), None);
-        // the target's shadow at the time shown
         let at = c.start + self.minute * 60.0;
         let sun = light_studio_astro::sun_horizontal(at, self.obs);
-        let shadow = match align::shadow(st.target_height, sun) {
-            Some((len, az)) => format!("{} → {}", plans::distance_label(len), crate::i18n::tr_ctx("compass", compass(az))),
-            None if st.target_height <= 0.0 => crate::i18n::tr("give the object a height").to_string(),
-            None => crate::i18n::tr("no sun").to_string(),
-        };
-        row(ui, "align:shadow", "Object's shadow", &shadow, Some(Color32::from_gray(125)));
-        ui.add_space(4.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-            if text_button(ui, "plannerSwapTarget", "Swap Camera and Target", false).clicked()
-                && let Some([la, lo]) = st.target
-            {
-                let (cl, co) = (st.lat, st.lon);
-                let keep = st.map;
-                set_place(st, la, lo, String::new());
-                st.map = keep;
-                st.target = Some([cl, co]);
+        if part != 1 {
+            subhead(ui, "From the Camera to the Target");
+            row(ui, "align:distance", "Distance", &plans::distance_label(s.distance), None);
+            row(ui, "align:azimuth", "Direction", &az_text(s.azimuth), None);
+            row(ui, "align:groundCamera", "Ground at the camera", &height_text(ground.map(|g| g.0)), None);
+            row(ui, "align:groundTarget", "Ground at the target", &height_text(ground.map(|g| g.1)), None);
+            if labelled_number(ui, rt, "targetHeight", "Object height (m)", &mut st.target_height, (0.0, 9000.0), 0) {
                 rt.align = None;
             }
-            if text_button(ui, "plannerClearTarget", "Clear Target", false).clicked() {
-                st.target = None;
-                rt.align = None;
-            }
-        });
+            row(ui, "align:altitude", "Angle to the top", &alt_text(s.altitude), None);
+            // the target's shadow at the time shown
+            let shadow = match align::shadow(st.target_height, sun) {
+                Some((len, az)) => format!("{} → {}", plans::distance_label(len), crate::i18n::tr_ctx("compass", compass(az))),
+                None if st.target_height <= 0.0 => crate::i18n::tr("give the object a height").to_string(),
+                None => crate::i18n::tr("no sun").to_string(),
+            };
+            row(ui, "align:shadow", "Object's shadow", &shadow, Some(Color32::from_gray(125)));
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+                if text_button(ui, "plannerSwapTarget", "Swap Camera and Target", false).clicked()
+                    && let Some([la, lo]) = st.target
+                {
+                    let (cl, co) = (st.lat, st.lon);
+                    let keep = st.map;
+                    set_place(st, la, lo, String::new());
+                    st.map = keep;
+                    st.target = Some([cl, co]);
+                    rt.align = None;
+                }
+                if text_button(ui, "plannerClearTarget", "Clear Target", false).clicked() {
+                    st.target = None;
+                    rt.align = None;
+                }
+            });
+        }
+        if part == 0 {
+            return;
+        }
 
         // the ground between
         subhead(ui, "Terrain Profile");
