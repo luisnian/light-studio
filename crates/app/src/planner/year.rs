@@ -82,14 +82,14 @@ pub(super) fn rate(n: &NightProfile) -> Rated {
 
 /// The nights of `year` at a place, one every [`STEP_DAYS`] days. `offset` is the UTC offset set by hand; without it
 /// each night uses the guess for its day, so summer time shows as the hour it moves the clock.
-pub(super) fn profiles(obs: Observer, year: i32, offset: Option<i32>) -> Vec<NightProfile> {
+pub(super) fn profiles(obs: Observer, year: i32, offset: Option<i32>, zone: Option<&super::zone::ZoneFix>) -> Vec<NightProfile> {
     let jan1 = Date::new(year, 1, 1);
     let days = if is_leap(year) { 366 } else { 365 };
     (0..days)
         .step_by(STEP_DAYS as usize)
         .map(|i| {
             let d = jan1.add_days(i);
-            let off = offset.unwrap_or_else(|| auto_utc_offset_min(obs.lat, obs.lon, d.unix_midnight_utc() + DAY / 2.0 - obs.lon * 240.0));
+            let off = offset.unwrap_or_else(|| super::zone::offset_at(obs.lat, obs.lon, d.unix_midnight_utc() + DAY / 2.0 - obs.lon * 240.0, zone).0);
             night_profile(obs, d.unix_midnight_utc() - f64::from(off) * 60.0, 900.0)
         })
         .collect()
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn a_year_is_a_column_a_day() {
-        let v = profiles(Observer::new(40.4, -3.7), 2024, Some(60));
+        let v = profiles(Observer::new(40.4, -3.7), 2024, Some(60), None);
         assert_eq!(v.len(), 366);
         assert!(v.windows(2).all(|w| (w[1].day_start - w[0].day_start - DAY).abs() < 1.0), "evenly spaced with a fixed offset");
         // the core is up in the dark in July but not in January
@@ -343,7 +343,7 @@ mod tests {
     #[test]
     fn summer_time_moves_the_columns_by_an_hour() {
         // with the offset guessed per day, local midnight in July is an hour earlier in UTC than in January
-        let v = profiles(Observer::new(40.4, -3.7), 2024, None);
+        let v = profiles(Observer::new(40.4, -3.7), 2024, None, None);
         let at = |i: usize| (v[i].day_start / DAY).fract() * 24.0;
         let (winter, summer) = (at(4), at(200));
         assert!((winter - summer - 1.0).abs() < 0.01 || (winter - summer + 23.0).abs() < 0.01, "{winter} {summer}");
@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn the_seasons_read_as_they_should_from_madrid() {
-        let v = profiles(Observer::new(40.4, -3.7), 2024, Some(120));
+        let v = profiles(Observer::new(40.4, -3.7), 2024, Some(120), None);
         let verdicts: Vec<Verdict> = v.iter().map(|n| rate(n).verdict).collect();
         let at = |month: u32| -> Vec<Verdict> {
             v.iter().zip(&verdicts).filter(|(n, _)| Date::from_unix(n.day_start + 3600.0, 120).month == month).map(|(_, v)| *v).collect()

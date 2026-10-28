@@ -8,3 +8,4 @@ pub mod pdi_sync;
 pub mod peaks;
 pub mod terrain;
 pub mod terrain_tiles;
+pub mod timezone;

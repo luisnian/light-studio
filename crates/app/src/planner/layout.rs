@@ -576,8 +576,13 @@ impl Page<'_> {
         if icon_button(ui, "plannerOffsetLess", Icon::Minus, size, false, true, "Earlier Time Zone").clicked() {
             st.utc_offset = Some((self.c.offset - 30).max(-720));
         }
-        let label =
-            format!("{}{}", utc_label(self.c.offset), if auto { format!(" ({})", crate::i18n::tr("auto, estimated")) } else { String::new() });
+        let source = super::zone::offset_at(st.lat, st.lon, super::noon_of(self.c.date, st.lon), st.zone.as_ref()).1;
+        let note = match (auto, source) {
+            (false, _) => String::new(),
+            (true, super::zone::Source::Real) => format!(" ({})", crate::i18n::tr("auto, from the place's time zone")),
+            (true, _) => format!(" ({})", crate::i18n::tr("auto, estimated")),
+        };
+        let label = format!("{}{}", utc_label(self.c.offset), note);
         ui.label(egui::RichText::new(label).font(t.font(12.0)).color(t.text_dim));
         if icon_button(ui, "plannerOffsetMore", Icon::Plus, size, false, true, "Later Time Zone").clicked() {
             st.utc_offset = Some((self.c.offset + 30).min(840));

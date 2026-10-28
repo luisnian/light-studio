@@ -36,6 +36,7 @@ mod skylayers;
 mod strip;
 mod tools;
 mod year;
+mod zone;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -48,7 +49,7 @@ use light_studio_astro::plan::{
 };
 use light_studio_astro::sky::SHOWERS;
 use light_studio_astro::sun::{Horizontal, Observer};
-use light_studio_astro::time::{DAY, Date, auto_utc_offset_min};
+use light_studio_astro::time::{DAY, Date};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -116,6 +117,8 @@ pub struct PlannerState {
     pub date: String,
     /// Minutes east of UTC; `None` guesses it from the place and day.
     pub utc_offset: Option<i32>,
+    /// The real offset the time zone service gave for the place (see zone.rs).
+    pub zone: Option<zone::ZoneFix>,
     /// The time shown, minutes after local midnight; `None` is now (today) or sunset.
     pub minute: Option<f64>,
     /// Which of the Sun, Moon and Milky Way core are drawn.
@@ -308,6 +311,7 @@ impl Default for PlannerState {
             place: String::new(),
             date: String::new(),
             utc_offset: None,
+            zone: None,
             minute: None,
             layers: [true; 3],
             sensor: optics::CANON_6D,
@@ -401,6 +405,7 @@ impl PlannerState {
         if self.utc_offset.is_some_and(|o| !(-720..=840).contains(&o)) {
             self.utc_offset = None;
         }
+        self.zone = self.zone.take().and_then(zone::ZoneFix::tidy);
         if self.minute.is_some_and(|m| !m.is_finite()) {
             self.minute = None;
         }
@@ -533,6 +538,8 @@ pub struct Runtime {
     phone: phone::Cache,
     /// The directions the Sun or Moon reaches over the days the Find card looks through, and what they were worked out for
     /// (the body, the place, the first day, the number of days).
+    /// The place the time zone was last asked for (latitude and longitude bits), so a failed try is not repeated every frame.
+    zone_asked: Option<(u64, u64)>,
     find_reach: Option<((u8, u64, u64, u64, u32), Box<[bool; 360]>)>,
     computed: Option<Arc<Computed>>,
     /// Text being typed in the number fields, by widget id.
@@ -767,15 +774,17 @@ fn observer(st: &PlannerState) -> Observer {
     Observer::new(st.lat, st.lon)
 }
 
-/// The day and UTC offset in force: the typed ones, else today and a guess for the place.
+/// Unix time of local noon on `date` at a place (before the zone is known: by longitude).
+fn noon_of(date: Date, lon: f64) -> f64 {
+    date.unix_midnight_utc() + DAY / 2.0 - lon * 240.0
+}
+
+/// The day and UTC offset in force: the typed ones, else today and the place's zone (the real answer where it applies, else a guess).
 fn resolve(st: &PlannerState, now: f64) -> (Date, i32) {
-    let guess_now = st.utc_offset.unwrap_or_else(|| auto_utc_offset_min(st.lat, st.lon, now));
+    let guess_now = st.utc_offset.unwrap_or_else(|| zone::offset_at(st.lat, st.lon, now, st.zone.as_ref()).0);
     let today = Date::from_unix(now, guess_now);
     let date = Date::parse(&st.date).unwrap_or(today);
-    let offset = st.utc_offset.unwrap_or_else(|| {
-        let noon = date.unix_midnight_utc() + DAY / 2.0 - st.lon * 240.0;
-        auto_utc_offset_min(st.lat, st.lon, noon)
-    });
+    let offset = st.utc_offset.unwrap_or_else(|| zone::offset_at(st.lat, st.lon, noon_of(date, st.lon), st.zone.as_ref()).0);
     (date, offset)
 }
 
@@ -924,14 +933,17 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     run_search(app, ui.ctx());
 
     let c = refresh(&app.ui.planner, &mut app.planner, now);
+    zone::ask(app, ui.ctx());
     let obs = observer(&app.ui.planner);
     let minute = cursor_minute(&app.ui.planner, &c, now);
     let at = c.start + minute * 60.0;
     let skies = skies_at(obs, at);
     // the nights of the year, for the year chart (the offset follows the place unless it was set by hand)
-    let year_key: YearKey = (app.ui.planner.lat.to_bits(), app.ui.planner.lon.to_bits(), c.date.year, app.ui.planner.utc_offset);
+    let zone_key = app.ui.planner.zone.as_ref().filter(|z| z.is_for(app.ui.planner.lat, app.ui.planner.lon)).map(|z| z.offset_min);
+    let year_key: YearKey =
+        (app.ui.planner.lat.to_bits(), app.ui.planner.lon.to_bits(), c.date.year, app.ui.planner.utc_offset.or(zone_key.map(|o| o + 100_000)));
     if app.planner.year.as_ref().is_none_or(|(k, _)| *k != year_key) {
-        let profiles = year::profiles(obs, c.date.year, app.ui.planner.utc_offset);
+        let profiles = year::profiles(obs, c.date.year, app.ui.planner.utc_offset, app.ui.planner.zone.as_ref());
         app.planner.year = Some((year_key, Arc::new(profiles)));
     }
     let year_nights = app.planner.year.as_ref().map(|(_, v)| v.clone()).unwrap_or_default();

@@ -665,5 +665,7 @@
  "Road, parking, walk, permits, hazards…": "Carretera, aparcamiento, caminata, permisos, peligros…",
  "Lenses, filters, tripod, headlamp…": "Objetivos, filtros, trípode, frontal…",
  "Tide, wind, season, light…": "Marea, viento, temporada, luz…",
- "File names or links, one a line": "Nombres de archivo o enlaces, uno por línea"
+ "File names or links, one a line": "Nombres de archivo o enlaces, uno por línea",
+ "auto, from the place's time zone": "auto, de la zona horaria del lugar",
+ "Finding the time zone": "Buscando la zona horaria"
 }
