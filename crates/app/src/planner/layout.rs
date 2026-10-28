@@ -576,7 +576,8 @@ impl Page<'_> {
         if icon_button(ui, "plannerOffsetLess", Icon::Minus, size, false, true, "Earlier Time Zone").clicked() {
             st.utc_offset = Some((self.c.offset - 30).max(-720));
         }
-        let label = format!("{}{}", utc_label(self.c.offset), if auto { format!(" ({})", crate::i18n::tr("auto")) } else { String::new() });
+        let label =
+            format!("{}{}", utc_label(self.c.offset), if auto { format!(" ({})", crate::i18n::tr("auto, estimated")) } else { String::new() });
         ui.label(egui::RichText::new(label).font(t.font(12.0)).color(t.text_dim));
         if icon_button(ui, "plannerOffsetMore", Icon::Plus, size, false, true, "Later Time Zone").clicked() {
             st.utc_offset = Some((self.c.offset + 30).min(840));

@@ -595,5 +595,15 @@
  "• It goes both ways: points made or edited here appear on the phone, and deleting on one side deletes on the other.": "• Va en los dos sentidos: los puntos creados o editados aquí aparecen en el móvil, y borrar en un lado borra en el otro.",
  "• Light Studio picks it up when it opens and every few minutes (or press Sync Now, or the cloud button on the map).": "• Light Studio lo recoge al abrirse y cada pocos minutos (o pulsa Sincronizar ahora, o el botón de la nube en el mapa).",
  "• The key stays in the Mac's keychain (on Windows, encrypted for your user), never in a plain file. To change it, generate a new one and set it in the Worker and the phone.": "• La clave se queda en el llavero del Mac (en Windows, cifrada para tu usuario), nunca en un archivo normal. Para cambiarla, genera una nueva y ponla en el Worker y en el móvil.",
- "★ A perigee closer than 361,000 km: a full or new moon then is a supermoon.": "★ Un perigeo a menos de 361 000 km: una luna llena o nueva entonces es una superluna."
+ "★ A perigee closer than 361,000 km: a full or new moon then is a supermoon.": "★ Un perigeo a menos de 361 000 km: una luna llena o nueva entonces es una superluna.",
+ "auto, estimated": "auto, estimada",
+ "Add a lens": "Añadir un objetivo",
+ "Shortest focal length (mm)": "Focal más corta (mm)",
+ "Longest focal length (mm)": "Focal más larga (mm)",
+ "Widest aperture (f/)": "Apertura máxima (f/)",
+ "Nearest focus (m)": "Enfoque mínimo (m)",
+ "Add lens": "Añadir objetivo",
+ "Any lens": "Sin límites de objetivo",
+ "Delete lens": "Borrar objetivo",
+ "Canon EOS 6D": "Canon EOS 6D"
 }

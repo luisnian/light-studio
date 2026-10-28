@@ -19,6 +19,7 @@ mod find;
 mod horizon;
 mod infopanel;
 mod layout;
+mod lenses;
 mod lineup;
 mod map;
 mod phone;
@@ -124,6 +125,10 @@ pub struct PlannerState {
     /// Focus distance, metres.
     pub distance: f64,
     pub megapixels: f64,
+    /// The photographer's lenses, the one chosen (limits the camera inputs) and the form to add another.
+    pub lenses: Vec<lenses::Lens>,
+    pub lens: Option<usize>,
+    pub lens_draft: lenses::Lens,
     /// Where the planner's map looks (centre and zoom).
     pub map: crate::map::MapView,
     /// Places kept by name, to come back to.
@@ -285,6 +290,9 @@ impl Default for PlannerState {
             aperture: 2.8,
             distance: 3.0,
             megapixels: optics::CANON_6D_MEGAPIXELS,
+            lenses: Vec::new(),
+            lens: None,
+            lens_draft: lenses::Lens::default(),
             map: crate::map::MapView { lat: 40.4168, lon: -3.7038, zoom: 9.0 },
             saved: Vec::new(),
             tl_event_h: 3.0,
@@ -366,6 +374,7 @@ impl PlannerState {
         self.aperture = clamp(self.aperture, 0.7, 64.0, d.aperture);
         self.distance = clamp(self.distance, 0.05, 100_000.0, d.distance);
         self.megapixels = clamp(self.megapixels, 0.5, 400.0, d.megapixels);
+        self.sane_lenses();
         self.tl_event_h = clamp(self.tl_event_h, 0.01, 240.0, d.tl_event_h);
         self.tl_clip = clamp(self.tl_clip, 0.1, 3600.0, d.tl_clip);
         self.tl_fps = clamp(self.tl_fps, 1.0, 240.0, d.tl_fps);
@@ -1828,6 +1837,8 @@ impl Page<'_> {
             st.sensor = n;
         }
         ui.add_space(8.0);
+        self.lens_picker(ui, st, rt);
+        ui.add_space(4.0);
         labelled_number(ui, rt, "focal", "Focal Length (mm)", &mut st.focal, (1.0, 2000.0), 0);
         // aperture walks the f-stops
         ui.horizontal(|ui| {
@@ -1844,6 +1855,7 @@ impl Page<'_> {
         });
         labelled_number(ui, rt, "distance", "Focus Distance (m)", &mut st.distance, (0.05, 100_000.0), 2);
         labelled_number(ui, rt, "megapixels", "Resolution (megapixels)", &mut st.megapixels, (0.5, 400.0), 1);
+        st.fit_to_lens();
     }
 
     /// What the camera gives: the sharp range, the stars and the field of view.
