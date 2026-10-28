@@ -30,14 +30,20 @@ impl Sensor {
     }
 }
 
-pub const SENSORS: [Sensor; 6] = [
+pub const SENSORS: [Sensor; 7] = [
     Sensor { name: "Full frame", width: 36.0, height: 24.0, coc: 0.029 },
     Sensor { name: "APS-C", width: 23.5, height: 15.6, coc: 0.019 },
     Sensor { name: "APS-C (Canon)", width: 22.3, height: 14.9, coc: 0.018 },
     Sensor { name: "Micro Four Thirds", width: 17.3, height: 13.0, coc: 0.015 },
     Sensor { name: "1 inch", width: 13.2, height: 8.8, coc: 0.0114 },
     Sensor { name: "Medium format 44x33", width: 43.8, height: 32.9, coc: 0.0365 },
+    // appended last so that the indices saved by earlier versions keep their meaning
+    Sensor { name: "Canon EOS 6D", width: 35.8, height: 23.9, coc: 0.029 },
 ];
+
+/// The index of the Canon EOS 6D in [`SENSORS`] and its resolution (megapixels), the defaults of a new planner.
+pub const CANON_6D: usize = 6;
+pub const CANON_6D_MEGAPIXELS: f64 = 20.2;
 
 /// Where the sharpness starts and ends when focused at a distance.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -318,6 +324,19 @@ mod tests {
         let t2 = shutter_for_ev(2.8, 3200.0, -7.0).unwrap_or(0.0);
         assert!((exposure_value(2.8, t2, 3200.0).unwrap_or(0.0) + 7.0).abs() < 1e-9);
         assert!(exposure_value(0.0, 1.0, 100.0).is_none());
+    }
+
+    #[test]
+    fn the_canon_6d_is_the_default_camera() {
+        let s = SENSORS[CANON_6D];
+        assert_eq!(s.name, "Canon EOS 6D");
+        // 5472 x 3648 pixels over 35.8 mm: 6.54 µm
+        let pitch = s.pixel_pitch_um(5472.0 * 3648.0 / 1e6);
+        assert!((pitch - 6.54).abs() < 0.02, "{pitch}");
+        // the megapixels the planner starts with give about the same pitch
+        assert!((s.pixel_pitch_um(CANON_6D_MEGAPIXELS) - pitch).abs() < 0.1);
+        // 35.8 mm across at 24 mm: 71.5°
+        assert!((field_of_view(s.width, 24.0).expect("valid") - 73.9).abs() < 0.5);
     }
 
     #[test]
