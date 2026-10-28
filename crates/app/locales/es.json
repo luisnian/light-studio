@@ -612,5 +612,21 @@
  "Longer than 30 s: set Bulb and time it with a remote or the intervalometer.": "Más de 30 s: usa Bulb y cronométralo con un disparador remoto o el intervalómetro.",
  "Exposure bracket": "Horquillado de exposición",
  "Step (stops)": "Paso (pasos)",
- "Time of the Bracket": "Duración del horquillado"
+ "Time of the Bracket": "Duración del horquillado",
+ "Any light": "Cualquier luz",
+ "Dark sky": "Cielo oscuro",
+ "Conditions": "Condiciones",
+ "The day's best moment that also meets these, not the best moment checked afterwards.": "El mejor momento del día que además cumple esto, no el mejor momento comprobado después.",
+ "Moon lit (%)": "Luna iluminada (%)",
+ "Moon down": "Luna bajo el horizonte",
+ "Over the skyline (°)": "Sobre el horizonte (°)",
+ "From the place's real skyline (ground heights; trees and buildings are not in it). 0° to 1°: just clearing the ridge; −1° to 0°: just behind it.": "Con el horizonte real del lugar (alturas del terreno; sin árboles ni edificios). De 0° a 1°: justo por encima de la cresta; de −1° a 0°: justo detrás.",
+ "Turn on Mountains once for this place: the skyline is read from the ground heights, and the search needs it.": "Activa Montañas una vez en este lugar: el horizonte se lee de las alturas del terreno y la búsqueda lo necesita.",
+ "over the skyline": "sobre el horizonte",
+ "azimuth": "azimut",
+ "elevation": "elevación",
+ "Sun at": "Sol a",
+ "of the Moon lit": "de la Luna iluminada",
+ "behind": "por detrás",
+ "the skyline of the ground heights": "del horizonte según las alturas del terreno"
 }

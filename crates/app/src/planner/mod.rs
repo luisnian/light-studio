@@ -192,6 +192,18 @@ pub struct PlannerState {
     pub shower: usize,
     /// Find the dates: the Sun (else the Moon) at an azimuth (and altitude), within a tolerance, over some days.
     pub find_sun: bool,
+    /// Looking for the Milky Way's core (then `find_sun` is false too).
+    pub find_core: bool,
+    /// The light wanted: 0 any, 1 golden hour, 2 blue hour, 3 dark sky (Sun below -18°).
+    pub find_light: u8,
+    /// The Moon's lit fraction wanted (percent, low and high), when `find_use_ill`.
+    pub find_use_ill: bool,
+    pub find_ill: [f64; 2],
+    /// The Moon must be under the horizon.
+    pub find_no_moon: bool,
+    /// The body must clear the skyline by this many degrees (low and high), when `find_skyline`.
+    pub find_skyline: bool,
+    pub find_margin: [f64; 2],
     pub find_az: f64,
     pub find_alt: f64,
     pub find_use_alt: bool,
@@ -337,6 +349,13 @@ impl Default for PlannerState {
             info_open: 1,
             shower: 4,
             find_sun: true,
+            find_core: false,
+            find_light: 0,
+            find_use_ill: false,
+            find_ill: [50.0, 100.0],
+            find_no_moon: false,
+            find_skyline: false,
+            find_margin: [0.0, 1.0],
             find_az: 90.0,
             find_alt: 10.0,
             find_use_alt: false,
@@ -395,6 +414,22 @@ impl PlannerState {
         self.find_alt = clamp(self.find_alt, -90.0, 90.0, d.find_alt);
         self.find_tol = clamp(self.find_tol, 0.1, 45.0, d.find_tol);
         self.find_days = clamp(self.find_days, 1.0, 400.0, d.find_days).round();
+        self.find_light = self.find_light.min(3);
+        for (v, dflt) in self.find_ill.iter_mut().zip(d.find_ill) {
+            *v = clamp(*v, 0.0, 100.0, dflt);
+        }
+        if self.find_ill[0] > self.find_ill[1] {
+            self.find_ill.swap(0, 1);
+        }
+        for (v, dflt) in self.find_margin.iter_mut().zip(d.find_margin) {
+            *v = clamp(*v, -10.0, 10.0, dflt);
+        }
+        if self.find_margin[0] > self.find_margin[1] {
+            self.find_margin.swap(0, 1);
+        }
+        if self.find_core {
+            self.find_sun = false;
+        }
         self.iso = clamp(self.iso, 6.0, 6_400_000.0, d.iso);
         self.print_cm = clamp(self.print_cm, 2.0, 2000.0, d.print_cm);
         self.view_cm = clamp(self.view_cm, 5.0, 10_000.0, d.view_cm);
@@ -484,7 +519,7 @@ pub struct Runtime {
     phone: phone::Cache,
     /// The directions the Sun or Moon reaches over the days the Find card looks through, and what they were worked out for
     /// (the body, the place, the first day, the number of days).
-    find_reach: Option<((bool, u64, u64, u64, u32), Box<[bool; 360]>)>,
+    find_reach: Option<((u8, u64, u64, u64, u32), Box<[bool; 360]>)>,
     computed: Option<Arc<Computed>>,
     /// Text being typed in the number fields, by widget id.
     fields: HashMap<String, String>,
@@ -514,6 +549,7 @@ pub struct Runtime {
     find_zoom: f64,
     found_label: String,
     found_moon: bool,
+    found_core: bool,
     /// How the table is sorted (see find.rs), backwards or not, the order of the hits and what it was made for.
     found_sort: u8,
     found_desc: bool,
@@ -2021,6 +2057,42 @@ mod tests {
         for tab in [Tab::Sun, Tab::Night, Tab::Calendar, Tab::Moon] {
             app.ui.planner.tab = tab;
             draw(&mut app, vec2(1400.0, 1000.0));
+        }
+    }
+
+    #[test]
+    fn the_find_card_draws_with_every_condition_on() {
+        for (sun, core) in [(true, false), (false, false), (false, true)] {
+            let mut app = new_app();
+            app.ui.planner = PlannerState {
+                date: "2024-07-14".into(),
+                placed: true,
+                find_sun: sun,
+                find_core: core,
+                find_light: 2,
+                find_use_ill: true,
+                find_no_moon: true,
+                find_skyline: true,
+                ..Default::default()
+            };
+            app.planner.find_open = true;
+            // the results table too, from a search over the same conditions
+            let obs = light_studio_astro::Observer::new(app.ui.planner.lat, app.ui.planner.lon);
+            let start = light_studio_astro::time::unix_from_civil(2024, 7, 14, 0, 0, 0);
+            app.planner.found_dates = Some(light_studio_astro::search::find_with(
+                light_studio_astro::search::Target::Moon,
+                obs,
+                start,
+                60,
+                150.0,
+                None,
+                40.0,
+                light_studio_astro::search::Conditions { sun_alt: Some((-6.0, -4.0)), ..Default::default() },
+            ));
+            for size in [vec2(500.0, 700.0), vec2(1400.0, 1000.0)] {
+                draw(&mut app, size);
+            }
+            assert!(app.planner.find_open, "the card stays open");
         }
     }
 

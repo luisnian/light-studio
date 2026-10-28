@@ -5,7 +5,7 @@
 //! A click on a result moves the time bar to it.
 
 use light_studio_astro::moon::moon_phase;
-use light_studio_astro::search::{Hit, Target, find_dates};
+use light_studio_astro::search::{Conditions, Hit, Target, find_with};
 use light_studio_astro::sun::sun_horizontal;
 
 use super::skylayers::{ASTRO_LIGHT, BLUE_LIGHT, DAY_LIGHT, GOLDEN_LIGHT, MOONRISE, NAUTICAL_LIGHT, NIGHT_LIGHT, SUNRISE, SUNSET, light_kind};
@@ -36,6 +36,39 @@ const LIGHTS: [(Color32, &str); 6] = [
 fn light_name(alt: f64) -> &'static str {
     let c = light_kind(alt);
     LIGHTS.iter().find(|(k, _)| *k == c).map_or("Night", |(_, n)| n)
+}
+
+/// The body looked for.
+fn body_target(st: &PlannerState) -> Target {
+    if st.find_core {
+        Target::Core
+    } else if st.find_sun {
+        Target::Sun
+    } else {
+        Target::Moon
+    }
+}
+
+/// Why a moment found is interesting, in words (the numbers are the astronomy's, nothing is guessed).
+fn explain(h: &Hit, body: &str, moon: bool) -> String {
+    let mut s = format!(
+        "{body}: {} {:.0}°, {} {:.1}°. {} {:.1}° ({}).",
+        crate::i18n::tr("azimuth"),
+        h.at.az,
+        crate::i18n::tr("elevation"),
+        h.at.alt,
+        crate::i18n::tr("Sun at"),
+        h.sun_alt,
+        crate::i18n::tr(light_name(h.sun_alt))
+    );
+    if moon {
+        s.push_str(&format!(" {:.0} % {}.", h.illumination * 100.0, crate::i18n::tr("of the Moon lit")));
+    }
+    if let Some(m) = h.margin {
+        let how = if m >= 0.0 { crate::i18n::tr("above") } else { crate::i18n::tr("behind") };
+        s.push_str(&format!(" {:.1}° {how} {}.", m.abs(), crate::i18n::tr("the skyline of the ground heights")));
+    }
+    s
 }
 
 /// The compass bearing (degrees clockwise from north, 0–360) of `p` from `c`.
@@ -140,9 +173,10 @@ impl Page<'_> {
     /// What to look for: the body, the direction on a mini-map, the elevation, the tolerance and the stretch of days.
     fn find_search(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, column_h: f32) {
         let t = self.t;
-        let items = [("Sun", "sun"), ("Moon", "moon")];
-        if let Some(n) = crate::widgets::segmented(ui, "plannerFindBody", &items, Some(usize::from(!st.find_sun)), 2) {
-            st.find_sun = n == 0;
+        let items = [("Sun", "sun"), ("Moon", "moon"), ("Milky Way", "core")];
+        let chosen = if st.find_core { 2 } else { usize::from(!st.find_sun) };
+        if let Some(n) = crate::widgets::segmented(ui, "plannerFindBody", &items, Some(chosen), 3) {
+            (st.find_sun, st.find_core) = (n == 0, n == 2);
         }
         ui.add_space(6.0);
         note(ui, crate::i18n::tr("Point the direction on the map and the height on the bar."));
@@ -182,11 +216,17 @@ impl Page<'_> {
         painter.rect_filled(map, 8.0, t.canvas);
         draw_tiles(&mut *self.tiles, &self.carto, self.satellite, rt.find_zoom, &ctx, &painter, map, cam, now, false);
         let c = map.center();
-        let tint = if st.find_sun { SUNRISE } else { MOONRISE };
+        let tint = if st.find_sun {
+            SUNRISE
+        } else if st.find_core {
+            self.pal.core
+        } else {
+            MOONRISE
+        };
         // the directions the body never takes in these days are darkened: no use pointing there
-        let key = (st.find_sun, st.lat.to_bits(), st.lon.to_bits(), self.c.start.to_bits(), st.find_days as u32);
+        let key = (u8::from(!st.find_sun) + u8::from(st.find_core), st.lat.to_bits(), st.lon.to_bits(), self.c.start.to_bits(), st.find_days as u32);
         if rt.find_reach.as_ref().is_none_or(|(k, _)| *k != key) {
-            let target = if st.find_sun { Target::Sun } else { Target::Moon };
+            let target = body_target(st);
             let seen = light_studio_astro::search::reachable_azimuths(target, self.obs, self.c.start, st.find_days as u32);
             rt.find_reach = Some((key, Box::new(seen)));
         }
@@ -261,22 +301,107 @@ impl Page<'_> {
         labelled_number(ui, rt, "findTol", "Tolerance (°)", &mut st.find_tol, (0.1, 45.0), 1);
         labelled_number(ui, rt, "findDays", "Days to look through", &mut st.find_days, (1.0, 400.0), 0);
         ui.add_space(6.0);
-        if text_button(ui, "plannerFindGo", "Find the Dates", false).clicked() {
-            let start = self.c.start;
-            let target = if st.find_sun { Target::Sun } else { Target::Moon };
-            let alt = st.find_use_alt.then_some(st.find_alt);
-            rt.found_dates = Some(find_dates(target, self.obs, start, st.find_days as u32, st.find_az, alt, st.find_tol));
-            let body = crate::i18n::tr(if st.find_sun { "Sun" } else { "Moon" });
-            let mut label = format!("{body} · {} {:.0}° ± {:.1}°", crate::i18n::tr("Azimuth"), st.find_az, st.find_tol);
-            if let Some(a) = alt {
-                label.push_str(&format!(" · {} {a:.0}° ± {:.1}°", crate::i18n::tr("Elevation"), st.find_tol));
+        self.find_conditions(ui, st, rt);
+        ui.add_space(6.0);
+        // the skyline is read when the Mountains view is on; a search over it needs it for this place
+        let skyline = rt.horizon.as_ref().filter(|h| h.key == super::horizon::key_of(st)).and_then(|h| h.data.as_ref().ok().cloned());
+        let waiting = st.find_skyline && skyline.is_none();
+        ui.add_enabled_ui(!waiting, |ui| {
+            if text_button(ui, "plannerFindGo", "Find the Dates", false).clicked() {
+                let start = self.c.start;
+                let target = body_target(st);
+                let alt = st.find_use_alt.then_some(st.find_alt);
+                let conditions = Conditions {
+                    sun_alt: match st.find_light {
+                        1 => Some((-4.0, 6.0)),
+                        2 => Some((-6.0, -4.0)),
+                        3 => Some((-90.0, -18.0)),
+                        _ => None,
+                    },
+                    moon_illumination: st.find_use_ill.then(|| (st.find_ill[0] / 100.0, st.find_ill[1] / 100.0)),
+                    moon_alt_max: st.find_no_moon.then_some(-1.0),
+                    skyline: if st.find_skyline { skyline.as_deref().map(|s| (s, st.find_margin[0], st.find_margin[1])) } else { None },
+                };
+                rt.found_dates = Some(find_with(target, self.obs, start, st.find_days as u32, st.find_az, alt, st.find_tol, conditions));
+                let body = crate::i18n::tr(if st.find_core {
+                    "Milky Way"
+                } else if st.find_sun {
+                    "Sun"
+                } else {
+                    "Moon"
+                });
+                let mut label = format!("{body} · {} {:.0}° ± {:.1}°", crate::i18n::tr("Azimuth"), st.find_az, st.find_tol);
+                if let Some(a) = alt {
+                    label.push_str(&format!(" · {} {a:.0}° ± {:.1}°", crate::i18n::tr("Elevation"), st.find_tol));
+                }
+                if let Some(name) =
+                    [None, Some("Golden hour"), Some("Blue hour"), Some("Dark sky")].get(usize::from(st.find_light)).copied().flatten()
+                {
+                    label.push_str(&format!(" · {}", crate::i18n::tr(name)));
+                }
+                if st.find_use_ill {
+                    label.push_str(&format!(" · {:.0}–{:.0} % {}", st.find_ill[0], st.find_ill[1], crate::i18n::tr("lit")));
+                }
+                if st.find_no_moon {
+                    label.push_str(&format!(" · {}", crate::i18n::tr("Moon down")));
+                }
+                if st.find_skyline {
+                    label.push_str(&format!(" · {} {:.1}° … {:.1}°", crate::i18n::tr("over the skyline"), st.find_margin[0], st.find_margin[1]));
+                }
+                rt.found_label = label;
+                rt.found_moon = !st.find_sun && !st.find_core;
+                rt.found_core = st.find_core;
+                rt.found_sorted_by = None;
+                if !rt.found_moon && rt.found_sort == SORT_PHASE {
+                    rt.found_sort = SORT_DATE;
+                }
             }
-            rt.found_label = label;
-            rt.found_moon = !st.find_sun;
-            rt.found_sorted_by = None;
-            if st.find_sun && rt.found_sort == SORT_PHASE {
-                rt.found_sort = SORT_DATE;
+        });
+    }
+
+    /// The conditions besides the direction: the light, the Moon, the skyline.
+    fn find_conditions(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime) {
+        subhead(ui, "Conditions");
+        note(ui, crate::i18n::tr("The day's best moment that also meets these, not the best moment checked afterwards."));
+        let lights = [("Any light", "0"), ("Golden hour", "1"), ("Blue hour", "2"), ("Dark sky", "3")];
+        if let Some(n) = crate::widgets::segmented(ui, "plannerFindLight", &lights, Some(usize::from(st.find_light)), 2) {
+            st.find_light = n as u8;
+        }
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+            if text_button(ui, "plannerFindUseIll", "Moon lit (%)", st.find_use_ill).clicked() {
+                st.find_use_ill = !st.find_use_ill;
             }
+            ui.add_enabled_ui(st.find_use_ill, |ui| {
+                number(ui, rt, "findIllLo", &mut st.find_ill[0], (0.0, 100.0), 0, 56.0);
+                number(ui, rt, "findIllHi", &mut st.find_ill[1], (0.0, 100.0), 0, 56.0);
+            });
+            if text_button(ui, "plannerFindNoMoon", "Moon down", st.find_no_moon).clicked() {
+                st.find_no_moon = !st.find_no_moon;
+            }
+        });
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+            if text_button(ui, "plannerFindSkyline", "Over the skyline (°)", st.find_skyline).clicked() {
+                st.find_skyline = !st.find_skyline;
+            }
+            ui.add_enabled_ui(st.find_skyline, |ui| {
+                number(ui, rt, "findMarginLo", &mut st.find_margin[0], (-10.0, 10.0), 1, 56.0);
+                number(ui, rt, "findMarginHi", &mut st.find_margin[1], (-10.0, 10.0), 1, 56.0);
+            });
+        });
+        if st.find_skyline {
+            let loaded = rt.horizon.as_ref().is_some_and(|h| h.key == super::horizon::key_of(st) && h.data.is_ok());
+            note(
+                ui,
+                crate::i18n::tr(if loaded {
+                    "From the place's real skyline (ground heights; trees and buildings are not in it). 0° to 1°: just clearing the ridge; −1° to 0°: just behind it."
+                } else {
+                    "Turn on Mountains once for this place: the skyline is read from the ground heights, and the search needs it."
+                }),
+            );
         }
     }
 
@@ -315,7 +440,13 @@ impl Page<'_> {
         }
         if st.find_use_alt {
             let y = gauge.bottom() - gauge.height() * (st.find_alt.clamp(0.0, 90.0) / 90.0) as f32;
-            let tint = if st.find_sun { SUNRISE } else { MOONRISE };
+            let tint = if st.find_sun {
+                SUNRISE
+            } else if st.find_core {
+                self.pal.core
+            } else {
+                MOONRISE
+            };
             let band = (gauge.height() * (st.find_tol / 90.0) as f32).max(3.0);
             let b = Rect::from_min_max(pos2(gauge.left(), (y - band).max(gauge.top())), pos2(gauge.right(), (y + band).min(gauge.bottom())));
             painter.rect_filled(b, 0.0, tint.gamma_multiply(0.5));
@@ -429,7 +560,15 @@ impl Page<'_> {
             if resp.hovered() {
                 ui.painter().rect_filled(cell, 6.0, t.hover.gamma_multiply(0.5));
             }
-            self.find_row(ui, st, h, cell, &cols, moon, (lit, shade));
+            let body = crate::i18n::tr(if rt.found_core {
+                "Milky Way"
+            } else if moon {
+                "Moon"
+            } else {
+                "Sun"
+            });
+            let resp = resp.on_hover_text(explain(h, body, moon));
+            self.find_row(ui, st, h, cell, &cols, moon, rt.found_core, (lit, shade));
             if resp.clicked() {
                 super::strip::jump_to(st, h.unix, self.c.offset);
                 rt.find_open = false;
@@ -455,7 +594,18 @@ impl Page<'_> {
         }
     }
 
-    fn find_row(&self, ui: &mut Ui, st: &PlannerState, h: &Hit, cell: Rect, cols: &FindCols, moon: bool, moon_colors: (Color32, Color32)) {
+    #[allow(clippy::too_many_arguments)]
+    fn find_row(
+        &self,
+        ui: &mut Ui,
+        st: &PlannerState,
+        h: &Hit,
+        cell: Rect,
+        cols: &FindCols,
+        moon: bool,
+        core: bool,
+        moon_colors: (Color32, Color32),
+    ) {
         let t = self.t;
         let p = ui.painter();
         let y = cell.center().y;
@@ -477,6 +627,11 @@ impl Page<'_> {
                 .replace("{n}", &format!("{lit_pct:.0}"))
                 .replace("{m}", &format!("{:.0}", 100.0 - lit_pct));
             p.text(pos2(cols.phase, y + 8.0), Align2::LEFT_CENTER, sub, t.font(11.0), t.text_dim);
+        } else if core {
+            let c = swatch.center();
+            p.circle_filled(c, 7.0, self.pal.core);
+            p.circle_stroke(c, 7.0, Stroke::new(1.0, Color32::BLACK.gamma_multiply(0.6)));
+            p.text(pos2(swatch.right() + 10.0, y), Align2::LEFT_CENTER, crate::i18n::tr(light_name(sun_alt)), t.font(11.5), t.text_dim);
         } else {
             // the Sun: a disc, orange when low and dimmed under the horizon
             let c = swatch.center();
