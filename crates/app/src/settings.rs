@@ -6,7 +6,7 @@ use egui::{Align2, Color32, Context, RichText, Ui, Window, vec2};
 use crate::App;
 use crate::i18n::{self, Language, tr};
 use crate::pdi_pair::Job;
-use crate::services::pdi_sync;
+use crate::services::pdi_sync::{self, PdiConfig};
 use crate::text_field::TextField;
 use crate::theme::Tokens;
 
@@ -24,6 +24,7 @@ pub fn show(app: &mut App, ctx: &Context) {
                 general(app, ui, &t);
                 phone(app, ui, &t);
                 link_phone(app, ui, &t);
+                phone_app(app, ui, &t);
                 files(app, ui, &t);
             });
         });
@@ -115,7 +116,7 @@ fn phone(app: &mut App, ui: &mut Ui, t: &Tokens) {
         }
     });
     if !pdi_sync::SUPPORTED {
-        hint(ui, t, tr("The key is kept in the Mac's keychain. On other systems, set it with the LIGHT_STUDIO_PDI_KEY variable."));
+        hint(ui, t, tr("The key can only be kept on the Mac or on Windows. On other systems, set it with the LIGHT_STUDIO_PDI_KEY variable."));
     }
     if let Some(k) = app.pdi_new_key.clone() {
         row(ui, t, "New key", |ui| {
@@ -229,6 +230,43 @@ fn link_phone(app: &mut App, ui: &mut Ui, t: &Tokens) {
                 }
             });
         }
+    }
+}
+
+/// The phone's web app: its address (to copy or open), a QR code to open it on the phone, and how to install and use it.
+fn phone_app(app: &mut App, ui: &mut Ui, t: &Tokens) {
+    let url = app.ui.settings.pdi.url.trim().trim_end_matches('/').to_string();
+    let url = if url.is_empty() { PdiConfig::default().url } else { url };
+    heading(ui, t, "The phone app");
+    row(ui, t, "Address", |ui| {
+        ui.label(RichText::new(&url).monospace().color(t.text));
+        if ui.button(tr("Copy Address")).clicked() {
+            ui.ctx().copy_text(url.clone());
+        }
+        if ui.button(tr("Open")).clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(url.clone()));
+        }
+    });
+    qr_code(ui, &url);
+    hint(ui, t, tr("Point the iPhone's camera at the code to open the address."));
+    hint(ui, t, tr("Add it to the iPhone's home screen:"));
+    for line in [
+        "1. Open the address in Safari (it must be Safari).",
+        "2. Tap the Share button (the square with an arrow).",
+        "3. Choose “Add to Home Screen” and tap Add. It opens like an app, full screen.",
+        "4. The first time, open Settings in the app, type the linking code and tap Link this phone (see above).",
+    ] {
+        hint(ui, t, tr(line));
+    }
+    hint(ui, t, tr("How it is used:"));
+    for line in [
+        "• In the field, tap + in the app, name the place and save: the position is taken from the phone, and you can add notes and photos.",
+        "• Light Studio picks it up when it opens and every few minutes (or press Sync Now, or the cloud button on the map).",
+        "• It goes both ways: points made or edited here appear on the phone, and deleting on one side deletes on the other.",
+        "• If both sides change the same point, the phone's copy is kept and yours is saved as “(conflict)”.",
+        "• The key stays in the Mac's keychain (on Windows, encrypted for your user), never in a plain file. To change it, generate a new one and set it in the Worker and the phone.",
+    ] {
+        hint(ui, t, tr(line));
     }
 }
 

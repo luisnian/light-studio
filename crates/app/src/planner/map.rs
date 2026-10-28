@@ -435,19 +435,10 @@ impl Page<'_> {
             self.mode_menu(ui, st, rt, mode_button);
         }
 
-        // the hint and the tiles' credit, along the bottom
-        let hint = painter.layout_no_wrap(
-            crate::i18n::tr(if st.target_mode {
-                "Click the map to put the target there."
-            } else {
-                "Click: move the place. Right-click: new POI, plan or target. Lines: rise and set; arrows: at the time shown."
-            })
-            .to_string(),
-            t.font(11.0),
-            t.text,
-        );
-        let hr = Rect::from_min_size(pos2(free.left(), free.bottom() - 24.0), hint.size() + vec2(20.0, 24.0 - hint.size().y));
-        if planner {
+        // while placing the target, a line says what the next click does (otherwise the map has no legend)
+        if planner && st.target_mode {
+            let hint = painter.layout_no_wrap(crate::i18n::tr("Click the map to put the target there.").to_string(), t.font(11.0), t.text);
+            let hr = Rect::from_min_size(pos2(free.left(), free.bottom() - 24.0), hint.size() + vec2(20.0, 24.0 - hint.size().y));
             crate::theme::paint_chip(&painter, hr, &t);
             painter.galley(pos2(hr.left() + 10.0, hr.center().y - hint.size().y / 2.0), hint, t.text);
         }

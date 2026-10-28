@@ -4,7 +4,8 @@
 //! This module only talks to the Worker and keeps its key; merging the points into the map is the planner's
 //! `import` (by id, idempotent), so pulling the same points ten times leaves one of each.
 //!
-//! The Worker's key is kept in the macOS keychain (`/usr/bin/security`, fixed arguments, no shell). It never goes in
+//! The Worker's key is kept in the macOS keychain (`/usr/bin/security`, fixed arguments, no shell) or, on Windows, in a
+//! file encrypted for the user's own login. It never goes in
 //! `ui.json`, a log or a message, and it is only ever sent over `https://` (plain `http://` is accepted for the
 //! computer itself, which the tests use). `LIGHT_STUDIO_PDI_KEY` stands in for the keychain where there is none.
 
@@ -410,10 +411,13 @@ pub trait Keys {
     fn set(&self, key: &str) -> Result<(), String>;
 }
 
+#[cfg(target_os = "macos")]
 const SERVICE: &str = "Light Studio PDI";
+#[cfg(target_os = "macos")]
 const ACCOUNT: &str = "worker";
 
-/// The macOS keychain (a stand-in key from the environment where there is none).
+/// Where the Worker's key is kept: the macOS keychain, or on Windows a file only this user can decrypt (a stand-in
+/// key from the environment where there is none).
 pub struct Keychain;
 
 impl Keys for Keychain {
@@ -423,9 +427,28 @@ impl Keys for Keychain {
         {
             return Ok(Some(k.trim().to_string()));
         }
+        platform::get()
+    }
+
+    fn set(&self, key: &str) -> Result<(), String> {
         if !SUPPORTED {
-            return Ok(None);
+            return Err("The key can only be kept on the Mac or on Windows".into());
         }
+        if !valid_key(key) {
+            return Err("That key is not valid (8 to 200 letters, digits or symbols, without quotes)".into());
+        }
+        platform::set(key)
+    }
+}
+
+/// Whether this build can keep the key (macOS keychain, Windows protected file).
+pub const SUPPORTED: bool = cfg!(any(target_os = "macos", windows));
+
+#[cfg(target_os = "macos")]
+mod platform {
+    use super::{ACCOUNT, SERVICE, valid_key};
+
+    pub fn get() -> Result<Option<String>, String> {
         let out = std::process::Command::new("/usr/bin/security")
             .args(["find-generic-password", "-s", SERVICE, "-a", ACCOUNT, "-w"])
             .stdin(std::process::Stdio::null())
@@ -441,14 +464,8 @@ impl Keys for Keychain {
         Ok(valid_key(&key).then_some(key))
     }
 
-    fn set(&self, key: &str) -> Result<(), String> {
+    pub fn set(key: &str) -> Result<(), String> {
         use std::io::Write;
-        if !SUPPORTED {
-            return Err("The keychain is only available on the Mac".into());
-        }
-        if !valid_key(key) {
-            return Err("That key is not valid (8 to 200 letters, digits or symbols, without quotes)".into());
-        }
         // the key goes in through the standard input, not the arguments, so it never shows in the process list
         let mut child = std::process::Command::new("/usr/bin/security")
             .arg("-i")
@@ -466,8 +483,76 @@ impl Keys for Keychain {
     }
 }
 
-/// Whether this build has a keychain (macOS).
-pub const SUPPORTED: bool = cfg!(target_os = "macos");
+/// Windows: the key is encrypted with the user's own Windows login (DPAPI, through PowerShell, the key going in by
+/// the standard input) and the result is kept in the settings folder; only this user on this computer can read it.
+#[cfg(windows)]
+mod platform {
+    use super::valid_key;
+    use std::io::Write;
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    const NO_WINDOW: u32 = 0x0800_0000;
+    const PROTECT: &str = "Add-Type -AssemblyName System.Security; $k=[Console]::In.ReadToEnd().Trim(); \
+        [Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($k),$null,\
+        [Security.Cryptography.DataProtectionScope]::CurrentUser))";
+    const UNPROTECT: &str = "Add-Type -AssemblyName System.Security; $b=[Console]::In.ReadToEnd().Trim(); \
+        [Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($b),$null,\
+        [Security.Cryptography.DataProtectionScope]::CurrentUser))";
+
+    fn file() -> Result<std::path::PathBuf, String> {
+        crate::paths::config_dir().map(|d| d.join("pdi-key.bin")).ok_or_else(|| "There is no settings folder to keep the key in".to_string())
+    }
+
+    fn powershell(script: &str, input: &str) -> Result<String, String> {
+        let mut child = Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script])
+            .creation_flags(NO_WINDOW)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("could not protect the key: {e}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(input.as_bytes()).map_err(|e| format!("could not protect the key: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("could not protect the key: {e}"))?;
+        if !out.status.success() {
+            return Err("Windows could not protect or read the key".into());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    pub fn get() -> Result<Option<String>, String> {
+        let path = file()?;
+        let Ok(stored) = std::fs::read_to_string(&path) else { return Ok(None) };
+        let key = powershell(UNPROTECT, stored.trim())?;
+        Ok(valid_key(&key).then_some(key))
+    }
+
+    pub fn set(key: &str) -> Result<(), String> {
+        let path = file()?;
+        let protected = powershell(PROTECT, key)?;
+        if protected.is_empty() {
+            return Err("Windows could not protect or read the key".into());
+        }
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("could not keep the key: {e}"))?;
+        }
+        std::fs::write(&path, protected).map_err(|e| format!("could not keep the key: {e}"))
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+mod platform {
+    pub fn get() -> Result<Option<String>, String> {
+        Ok(None)
+    }
+
+    pub fn set(_: &str) -> Result<(), String> {
+        Err("The key can only be kept on the Mac or on Windows".into())
+    }
+}
 
 /// The real Worker over HTTPS.
 #[cfg(not(target_arch = "wasm32"))]
