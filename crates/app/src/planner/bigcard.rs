@@ -50,6 +50,26 @@ fn open(rt: &mut Runtime, card: Card) {
 }
 
 /// The mode tabs of the Sky card and the page each shows.
+/// A piece of a card.
+#[derive(Clone, Copy)]
+enum Item {
+    Now,
+    SunCard,
+    SunFacts,
+    SunCal,
+    Dial,
+    MoonCard,
+    MoonFacts,
+    MoonCal,
+    Core,
+    Showers,
+    Eclipses,
+    NightCal,
+    Year,
+    /// A part of the Line Up card (see `align_card`).
+    Align(u8),
+}
+
 const SKY_TABS: [Tab; 4] = [Tab::Sun, Tab::Moon, Tab::Night, Tab::Calendar];
 
 impl Page<'_> {
@@ -104,10 +124,55 @@ impl Page<'_> {
             st.tab = *tab;
         }
         ui.add_space(10.0);
-        let tab = SKY_TABS.get(chosen).copied().unwrap_or(Tab::Sun);
-        let two = ui.available_width() >= 760.0;
-        let mut parts = |ui: &mut Ui, half: usize| match (tab, half) {
-            (Tab::Sun, 0) => {
+        let list: &[Item] = match SKY_TABS.get(chosen).copied().unwrap_or(Tab::Sun) {
+            Tab::Sun => &[Item::Now, Item::SunCard, Item::SunCal, Item::SunFacts, Item::Dial],
+            Tab::Moon => &[Item::MoonCard, Item::MoonCal, Item::MoonFacts],
+            Tab::Night => &[Item::Core, Item::NightCal, Item::Showers, Item::Year, Item::Eclipses],
+            _ => &[Item::Year, Item::Core],
+        };
+        self.flow(ui, st, rt, list);
+    }
+
+    /// The pieces laid out in the card: each goes under whichever column is shorter, so there are no gaps.
+    fn flow(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, list: &[Item]) {
+        if ui.available_width() < 760.0 {
+            for (i, item) in list.iter().enumerate() {
+                if i > 0 {
+                    ui.add_space(8.0);
+                }
+                self.item(ui, st, rt, *item);
+            }
+            return;
+        }
+        let gap = 32.0;
+        let full = ui.available_rect_before_wrap();
+        let w = ((full.width() - gap) / 2.0).floor();
+        let mut cols: Vec<Ui> = (0..2)
+            .map(|i| {
+                let x = full.left() + i as f32 * (w + gap);
+                let mut c = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(Rect::from_min_size(pos2(x, full.top()), vec2(w, full.height())))
+                        .layout(egui::Layout::top_down(Align::Min)),
+                );
+                c.set_width(w);
+                c
+            })
+            .collect();
+        for item in list {
+            let height = |c: &Ui| c.min_rect().height();
+            let pick = usize::from(height(&cols[1]) < height(&cols[0]));
+            let col = &mut cols[pick];
+            col.add_space(if height(col) > 1.0 { 8.0 } else { 0.0 });
+            self.item(col, st, rt, *item);
+        }
+        let used = cols.iter().fold(Rect::from_min_size(full.min, vec2(0.0, 0.0)), |r, c| r.union(c.min_rect()));
+        ui.allocate_rect(used, Sense::hover());
+    }
+
+    fn item(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, item: Item) {
+        match item {
+            Item::Now => {
                 self.now_grid(ui, st);
                 let shadow = match light_studio_astro::align::shadow(1.0, self.skies.sun) {
                     Some((k, az)) => crate::i18n::tr("{k}× the object's height, towards {d}")
@@ -117,53 +182,41 @@ impl Page<'_> {
                 };
                 ui.add_space(4.0);
                 row(ui, "sun:shadow", "Shadows", &shadow, Some(Color32::from_gray(125)));
-                ui.add_space(8.0);
-                self.sun_card(ui);
-                self.sun_facts(ui);
             }
-            (Tab::Sun, _) => {
+            Item::SunCard => self.sun_card(ui),
+            Item::SunFacts => self.sun_facts(ui),
+            Item::SunCal => {
                 subhead(ui, "Sun Calendar");
                 self.sky_calendar(ui, SkyMode::Sun, rt);
+            }
+            Item::Dial => {
                 subhead(ui, "Sky");
                 self.dial_card(ui);
             }
-            (Tab::Moon, 0) => {
-                self.moon_card(ui, st);
-                self.moon_facts(ui, rt);
-            }
-            (Tab::Moon, _) => {
+            Item::MoonCard => self.moon_card(ui, st),
+            Item::MoonFacts => self.moon_facts(ui, rt),
+            Item::MoonCal => {
                 subhead(ui, "Moon Calendar");
                 self.sky_calendar(ui, SkyMode::Moon, rt);
             }
-            (Tab::Night, 0) => {
-                self.core_card(ui);
+            Item::Core => self.core_card(ui),
+            Item::Showers => {
                 subhead(ui, "Meteor Showers");
                 self.showers_card(ui);
+            }
+            Item::Eclipses => {
                 subhead(ui, "Eclipses");
                 self.eclipses_card(ui, st, rt);
             }
-            (Tab::Night, _) => {
+            Item::NightCal => {
                 subhead(ui, "Night Calendar");
                 self.sky_calendar(ui, SkyMode::Night, rt);
+            }
+            Item::Year => {
                 subhead(ui, "Milky Way Calendar");
                 self.year_card(ui, st);
             }
-            (_, 0) => {
-                subhead(ui, "Milky Way Calendar");
-                self.year_card(ui, st);
-            }
-            _ => self.core_card(ui),
-        };
-        if two {
-            ui.spacing_mut().item_spacing.x = 32.0;
-            ui.columns(2, |cols| {
-                parts(&mut cols[0], 0);
-                parts(&mut cols[1], 1);
-            });
-        } else {
-            parts(ui, 0);
-            ui.add_space(8.0);
-            parts(ui, 1);
+            Item::Align(part) => self.align_card(ui, st, rt, part),
         }
     }
 
@@ -184,15 +237,7 @@ impl Page<'_> {
         super::popup::card_scroll(&mut cui, "planner-align-card", body, |ui| {
             egui::Frame::NONE.inner_margin(Margin { left: 20, right: 20, top: 4, bottom: 20 }).show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                if ui.available_width() >= 760.0 {
-                    ui.spacing_mut().item_spacing.x = 32.0;
-                    ui.columns(2, |cols| {
-                        self.align_card(&mut cols[0], st, rt, 0);
-                        self.align_card(&mut cols[1], st, rt, 1);
-                    });
-                } else {
-                    self.align_card(ui, st, rt, 2);
-                }
+                self.flow(ui, st, rt, &[Item::Align(0), Item::Align(1), Item::Align(3)]);
             });
         });
     }

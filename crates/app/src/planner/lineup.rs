@@ -74,14 +74,14 @@ pub(super) fn fetch_terrain(app: &mut App) {
 }
 
 impl Page<'_> {
-    /// Line up: `part` 0 is the target's numbers, 1 the terrain and the dates, 2 both (one under the other).
+    /// Line up: `part` 0 is the target's numbers, 1 the terrain and the bodies now, 3 the dates, 2 all of it (one under the other).
     pub(super) fn align_card(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, part: u8) {
         let t = self.t;
         let pal = self.pal;
         let c = self.c;
         let ground = ground_ends(st, rt);
         let Some(s) = plans::sight_of(st, ground) else {
-            if part == 1 {
+            if part != 0 && part != 2 {
                 return;
             }
             note(
@@ -102,7 +102,7 @@ impl Page<'_> {
         };
         let at = c.start + self.minute * 60.0;
         let sun = light_studio_astro::sun_horizontal(at, self.obs);
-        if part != 1 {
+        if part == 0 || part == 2 {
             subhead(ui, "From the Camera to the Target");
             row(ui, "align:distance", "Distance", &plans::distance_label(s.distance), None);
             row(ui, "align:azimuth", "Direction", &az_text(s.azimuth), None);
@@ -138,45 +138,50 @@ impl Page<'_> {
                 }
             });
         }
-        if part == 0 {
+        if part == 0 || part == 3 {
+            if part == 0 {
+                return;
+            }
+        } else {
+            // the ground between
+            subhead(ui, "Terrain Profile");
+            match terrain.as_ref().map(|t| &t.ground) {
+                Some(Ok(g)) => match align::profile(s.distance, g, st.target_height) {
+                    Some(p) => self.profile_chart(ui, &p, s.distance),
+                    None => note(ui, crate::i18n::tr("The place and the target are the same point.")),
+                },
+                Some(Err(e)) => {
+                    note(ui, &format!("{}: {e}", crate::i18n::tr("Could not look up the ground heights")));
+                    if text_button(ui, "plannerTerrainRetry", "Try Again", false).clicked() {
+                        rt.terrain = None;
+                    }
+                }
+                None => note(
+                    ui,
+                    crate::i18n::tr(if pending {
+                        "Looking up the ground heights…"
+                    } else {
+                        "The ground heights are looked up when there is a target."
+                    }),
+                ),
+            }
+
+            // where the bodies are now, and when they line up
+            subhead(ui, "At the Time Shown");
+            let off = |h: Horizontal| {
+                let d = (h.az - s.azimuth + 540.0).rem_euclid(360.0) - 180.0;
+                let alt = h.alt + align::refraction(h.alt);
+                let side = if d < 0.0 { crate::i18n::tr("left") } else { crate::i18n::tr("right") };
+                let up = alt - s.altitude;
+                let vert = if up >= 0.0 { crate::i18n::tr("above") } else { crate::i18n::tr("below") };
+                format!("{:.1}° {side} · {:.1}° {vert}", d.abs(), up.abs())
+            };
+            row(ui, "align:sunNow", "Sun now", &off(sun), Some(pal.sun));
+            row(ui, "align:moonNow", "Moon now", &off(light_studio_astro::moon_horizontal(at, self.obs)), Some(pal.moon));
+        }
+        if part == 1 {
             return;
         }
-
-        // the ground between
-        subhead(ui, "Terrain Profile");
-        match terrain.as_ref().map(|t| &t.ground) {
-            Some(Ok(g)) => match align::profile(s.distance, g, st.target_height) {
-                Some(p) => self.profile_chart(ui, &p, s.distance),
-                None => note(ui, crate::i18n::tr("The place and the target are the same point.")),
-            },
-            Some(Err(e)) => {
-                note(ui, &format!("{}: {e}", crate::i18n::tr("Could not look up the ground heights")));
-                if text_button(ui, "plannerTerrainRetry", "Try Again", false).clicked() {
-                    rt.terrain = None;
-                }
-            }
-            None => note(
-                ui,
-                crate::i18n::tr(if pending {
-                    "Looking up the ground heights…"
-                } else {
-                    "The ground heights are looked up when there is a target."
-                }),
-            ),
-        }
-
-        // where the bodies are now, and when they line up
-        subhead(ui, "At the Time Shown");
-        let off = |h: Horizontal| {
-            let d = (h.az - s.azimuth + 540.0).rem_euclid(360.0) - 180.0;
-            let alt = h.alt + align::refraction(h.alt);
-            let side = if d < 0.0 { crate::i18n::tr("left") } else { crate::i18n::tr("right") };
-            let up = alt - s.altitude;
-            let vert = if up >= 0.0 { crate::i18n::tr("above") } else { crate::i18n::tr("below") };
-            format!("{:.1}° {side} · {:.1}° {vert}", d.abs(), up.abs())
-        };
-        row(ui, "align:sunNow", "Sun now", &off(sun), Some(pal.sun));
-        row(ui, "align:moonNow", "Moon now", &off(light_studio_astro::moon_horizontal(at, self.obs)), Some(pal.moon));
         subhead(ui, "Find the Alignment");
         let key = (st.lat.to_bits(), st.lon.to_bits(), s.azimuth.to_bits(), s.altitude.to_bits(), c.date.days());
         if text_button(ui, "plannerFindAlignments", "Find Dates", false).clicked() {

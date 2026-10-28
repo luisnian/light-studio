@@ -1019,7 +1019,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let mode = st.map_mode;
     let planner = mode == MapMode::Planner;
     // a card (the calculations, Find) takes the room: the side panel steps aside when it opens and stays away after
-    let card = rt.calc_open || rt.find_open;
+    let card = rt.calc_open || rt.find_open || rt.sky_open || rt.align_open;
     if card && !rt.calc_seen {
         st.panel_hidden = true;
     }
@@ -1055,7 +1055,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     if rt.find_open {
         blocked.push(areas.free.shrink(8.0));
     }
-    if rt.calc_open {
+    if rt.calc_open || rt.sky_open || rt.align_open {
         blocked.push(areas.free.shrink(8.0));
     }
     if st.show_horizon && planner {
@@ -2215,6 +2215,12 @@ mod tests {
                     for size in [vec2(300.0, 400.0), vec2(1000.0, 700.0), vec2(1900.0, 1000.0)] {
                         draw(&mut app, size);
                     }
+                    // the side panel steps aside when the card opens, and stays away once it is closed
+                    assert!(app.ui.planner.panel_hidden);
+                    toggle(&mut app.planner, card);
+                    draw(&mut app, vec2(1000.0, 700.0));
+                    assert!(app.ui.planner.panel_hidden && !(app.planner.sky_open || app.planner.align_open));
+                    app.ui.planner.panel_hidden = false;
                 }
             }
         }
