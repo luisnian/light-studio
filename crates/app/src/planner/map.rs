@@ -448,13 +448,6 @@ impl Page<'_> {
             painter.rect_filled(ar, 4.0, t.chrome.gamma_multiply(0.7));
             painter.galley(ar.min + vec2(4.0, 2.0), a, t.text_dim);
         }
-        let credit = self.tiles.credit(self.satellite);
-        if !credit.is_empty() {
-            let a = painter.layout_no_wrap(credit.to_string(), t.font(9.5), t.text_dim);
-            let ar = Rect::from_min_size(pos2(free.right() - a.size().x - 8.0, free.bottom() - a.size().y - 4.0), a.size() + vec2(8.0, 4.0));
-            painter.rect_filled(ar, 4.0, t.chrome.gamma_multiply(0.7));
-            painter.galley(ar.min + vec2(4.0, 2.0), a, t.text_dim);
-        }
     }
 }
 

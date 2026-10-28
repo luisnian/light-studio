@@ -127,16 +127,6 @@ impl Runtime {
         self.retry.clear();
     }
 
-    /// The credit line of the tiles in use.
-    pub(crate) fn credit(&self, satellite: bool) -> &'static str {
-        let source = self.tiles.as_ref().map_or(map_tiles::Source::Osm, MapTiles::source);
-        // (a source of one's own, `LIGHT_STUDIO_MAP_TILES`, serves the satellite view too)
-        if satellite && source != map_tiles::Source::Custom {
-            return map_tiles::SATELLITE_ATTRIBUTION;
-        }
-        source.attribution()
-    }
-
     /// Takes in the tiles that arrived since the last frame.
     fn receive(&mut self, ctx: &egui::Context, now: f64) {
         let Some(service) = &self.tiles else { return };

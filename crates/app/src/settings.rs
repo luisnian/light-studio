@@ -69,6 +69,7 @@ fn general(app: &mut App, ui: &mut Ui, t: &Tokens) {
     row(ui, t, "CARTO key", |ui| {
         TextField::singleline("field:cartoKey", &mut app.ui.map_carto_key).hint(tr("Optional: a key for CARTO's plain map")).width(260.0).show(ui);
     });
+    hint(ui, t, tr("Map credits: satellite © Esri, Maxar, Earthstar Geographics; plain map © OpenStreetMap contributors, © CARTO."));
     hint(ui, t, tr("Without a key the plain map comes from OpenStreetMap. A free key is given at carto.com/basemaps/apikey."));
 }
 

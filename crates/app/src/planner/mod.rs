@@ -868,6 +868,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let year_nights = app.planner.year.as_ref().map(|(_, v)| v.clone()).unwrap_or_default();
     let carto = app.ui.map_carto_key.trim().to_string();
     let satellite = app.ui.map_satellite;
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("planner-plain-map"), !satellite));
     let locating = app.tasks.is_running(LOCATING);
     let syncing = app.pdi.running();
     // the cloud button's colour: green when every point is in step with the phone's Worker, red when something is waiting to

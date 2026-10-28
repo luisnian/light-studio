@@ -84,13 +84,17 @@ pub(super) fn surface(p: &egui::Painter, r: Rect, t: &Tokens) {
 
 /// How opaque the search and date/time cards are at rest (they are 60 % see-through so they do not hide the map).
 const CARD_REST: f32 = 0.4;
+/// The same over the plain (light) map: nearly solid, so the dark cards do not turn into grey patches.
+const CARD_REST_PLAIN: f32 = 0.9;
 
 /// The share of opacity of a card over the map: `CARD_REST` at rest, full with the pointer over it (or `keep`),
 /// eased over a moment.
 pub(super) fn card_opacity(ctx: &egui::Context, id: &str, r: Rect, keep: bool) -> f32 {
     let over = ctx.pointer_hover_pos().is_some_and(|p| r.expand(2.0).contains(p)) || keep;
     let k = ctx.animate_bool_with_time(egui::Id::new(("planner-card-fade", id)), over, 0.12);
-    CARD_REST + (1.0 - CARD_REST) * k
+    let plain = ctx.data(|d| d.get_temp::<bool>(egui::Id::new("planner-plain-map"))).unwrap_or(false);
+    let rest = if plain { CARD_REST_PLAIN } else { CARD_REST };
+    rest + (1.0 - rest) * k
 }
 
 /// A floating panel's surface at the given opacity (0..1; 1 = as every card).
