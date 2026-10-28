@@ -22,6 +22,7 @@ mod layout;
 mod lenses;
 mod lineup;
 mod map;
+mod notebook;
 mod phone;
 mod places;
 mod plans;
@@ -259,6 +260,8 @@ pub struct SavedPlace {
     pub tags: Vec<String>,
     /// Photos kept in the cloud for it (from the phone), carried through untouched.
     pub attachments: Vec<pois::Attachment>,
+    /// The notebook of the place (see [`notebook`]): kept on this computer, outside the phone's format.
+    pub notebook: notebook::Notebook,
     /// Synchronisation with the Worker: the version it last confirmed (0 = it does not know the point), whether the
     /// point changed here since, and whether the Worker refused such a change (a conflict, to be settled by taking the
     /// Worker's version).
@@ -285,6 +288,7 @@ impl Default for SavedPlace {
             category: String::new(),
             tags: Vec::new(),
             attachments: Vec::new(),
+            notebook: notebook::Notebook::default(),
             base: 0,
             dirty: false,
             conflict: false,
@@ -2137,6 +2141,39 @@ mod tests {
                 let st = &app.ui.planner;
                 assert!(st.cam_az.is_finite() && st.cam_alt.is_finite() && st.focal >= 1.0 && st.vf_compare <= 0xff, "{st:?}");
             }
+        }
+    }
+
+    #[test]
+    fn a_record_with_a_notebook_draws_read_and_written() {
+        for editing in [false, true] {
+            let mut app = new_app();
+            let mut site = SavedPlace { name: "Faro".into(), lat: 43.39, lon: -1.79, ..Default::default() };
+            site.ensure_identity();
+            site.notebook.access = "aparcar en el puerto".into();
+            site.notebook.references = "IMG_1.CR2\nhttps://example.org".into();
+            site.notebook.shots = vec![
+                notebook::Shot { title: "Luna sobre el faro".into(), frame: Some(viewfinder::FrameShot::default()), ..Default::default() },
+                notebook::Shot {
+                    title: "Mar sedoso".into(),
+                    done: true,
+                    done_on: "2026-10-01".into(),
+                    result: "IMG_2.CR2".into(),
+                    ..Default::default()
+                },
+            ];
+            let plan = plans::Plan { id: 5, name: "Plan en el faro".into(), lat: 43.3901, lon: -1.7901, ..Default::default() };
+            app.ui.planner = PlannerState { saved: vec![site], plans: vec![plan], placed: true, ..Default::default() };
+            app.planner.site_open = Some(0);
+            if editing {
+                app.planner.edit_of = Some(popup::Shown::Site(0));
+            }
+            for size in [vec2(500.0, 700.0), vec2(1500.0, 1000.0)] {
+                draw(&mut app, size);
+            }
+            let st = &app.ui.planner;
+            assert_eq!(st.saved[0].notebook.shots.len(), 2);
+            assert_eq!(st.saved[0].version, 1, "drawing or editing the notebook is not a new version");
         }
     }
 

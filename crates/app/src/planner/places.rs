@@ -149,6 +149,9 @@ impl Page<'_> {
                 ui.add_space(6.0);
             }
         }
+        if part.right() {
+            self.site_notebook(ui, st, rt, i, editing);
+        }
     }
 
     /// Under the record's title: where it is and what to do with it (put the camera there, target it, plan it…).

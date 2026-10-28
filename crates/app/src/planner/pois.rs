@@ -112,7 +112,16 @@ impl SavedPlace {
 
     /// The same point apart from its version and edit time (to tell whether an edit changed anything).
     pub(super) fn same_content(&self, other: &SavedPlace) -> bool {
-        let strip = |p: &SavedPlace| SavedPlace { version: 0, updated_at: String::new(), base: 0, dirty: false, conflict: false, ..p.clone() };
+        // (the notebook is not part of the record the phone and the Worker know: writing in it is no new version)
+        let strip = |p: &SavedPlace| SavedPlace {
+            version: 0,
+            updated_at: String::new(),
+            base: 0,
+            dirty: false,
+            conflict: false,
+            notebook: Default::default(),
+            ..p.clone()
+        };
         strip(self) == strip(other)
     }
 
@@ -137,6 +146,7 @@ impl SavedPlace {
         for t in &mut self.tags {
             cut(t, 40);
         }
+        self.notebook.tidy();
         self.attachments.truncate(MAX_ATTACHMENTS);
         for a in &mut self.attachments {
             cut(&mut a.key, 300);
@@ -293,6 +303,7 @@ pub(super) fn import_json(saved: &mut Vec<SavedPlace>, text: &str, max: usize) -
                     if point.version > old.version {
                         point.base = old.base;
                         point.dirty = true;
+                        point.notebook = std::mem::take(&mut old.notebook);
                         *old = point;
                         old.ensure_identity();
                         out.updated += 1;
@@ -385,6 +396,8 @@ pub(super) fn merge_worker(saved: &mut Vec<SavedPlace>, records: &[serde_json::V
                 let Some(old) = saved.get_mut(i) else { continue };
                 let take = old.conflict || (!old.dirty && point.version > old.base);
                 if take {
+                    // the notebook is only here: a record from the Worker never carries it
+                    point.notebook = std::mem::take(&mut old.notebook);
                     *old = point;
                     out.updated += 1;
                 } else {
@@ -438,6 +451,57 @@ mod tests {
         let parts: Vec<&str> = id.split('-').collect();
         assert_eq!(parts.iter().map(|s| s.len()).collect::<Vec<_>>(), [8, 4, 4, 4, 12]);
         assert!(parts[2].starts_with('4') && "89ab".contains(&parts[3][..1]), "{id}");
+    }
+
+    fn with_notebook(mut p: SavedPlace) -> SavedPlace {
+        p.notebook.gear = "trípode, ND1000".into();
+        p.notebook.shots.push(super::super::notebook::Shot { title: "Luna sobre el faro".into(), ..Default::default() });
+        p
+    }
+
+    #[test]
+    fn writing_in_the_notebook_is_not_a_new_version_for_the_phone() {
+        let before = point("Faro", 43.39, -1.79);
+        let after = with_notebook(before.clone());
+        assert!(after.same_content(&before), "the notebook is outside the shared record");
+        let mut changed = before.clone();
+        changed.notes = "x".into();
+        assert!(!changed.same_content(&before));
+    }
+
+    #[test]
+    fn a_sync_from_the_worker_never_wipes_the_notebook() {
+        let mut mine = with_notebook(point("Faro", 43.39, -1.79));
+        mine.base = mine.version;
+        mine.dirty = false;
+        // the Worker has a newer version of the same point (renamed on the phone)
+        let mut theirs = point("Faro de Higer", 43.39, -1.79);
+        theirs.id = mine.id.clone();
+        theirs.version = mine.version + 1;
+        let records = vec![serde_json::to_value(Record::of(&theirs)).expect("serialises")];
+        let mut saved = vec![mine.clone()];
+        let out = merge_worker(&mut saved, &records, 100, &[]);
+        assert_eq!(out.updated, 1);
+        assert_eq!(saved[0].name, "Faro de Higer");
+        assert_eq!(saved[0].notebook, mine.notebook, "the notebook survives the update");
+    }
+
+    #[test]
+    fn importing_a_newer_file_keeps_the_notebook() {
+        let mine = with_notebook(point("Faro", 43.39, -1.79));
+        let mut newer = point("Faro nuevo", 43.39, -1.79);
+        newer.id = mine.id.clone();
+        newer.version = mine.version + 1;
+        let file = export_json(&[newer]).expect("exports");
+        let mut saved = vec![mine.clone()];
+        let out = import_json(&mut saved, &file, 100).expect("imports");
+        assert_eq!(out.updated, 1);
+        assert_eq!((saved[0].name.as_str(), &saved[0].notebook), ("Faro nuevo", &mine.notebook));
+        // and what goes out to the phone has no notebook in it
+        let exported = export_json(&saved).expect("exports");
+        assert!(!exported.contains("trípode") && !exported.contains("notebook"));
+        let worker = worker_poi(&saved[0]).to_string();
+        assert!(!worker.contains("trípode"));
     }
 
     #[test]
