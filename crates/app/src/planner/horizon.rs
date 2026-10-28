@@ -58,10 +58,13 @@ pub(super) fn key_of(st: &PlannerState) -> HorizonKey {
     (st.lat.to_bits(), st.lon.to_bits())
 }
 
-/// Where the skyline goes: all of the map's free part, under the search box.
+/// Where the skyline goes: the map's free part, under the search box and beside the date and time cards (when there is
+/// room for it; on a narrow window it runs underneath them).
 pub(super) fn view_rect(free: Rect) -> Rect {
     let top = free.top() + 44.0;
-    let r = Rect::from_min_max(pos2(free.left() + 8.0, top.min(free.bottom())), pos2(free.right() - 8.0, free.bottom() - 8.0));
+    let beside = super::layout::cards_rects(free)[0].right() + 8.0;
+    let left = if free.right() - 8.0 - beside >= 420.0 { beside } else { free.left() + 8.0 };
+    let r = Rect::from_min_max(pos2(left, top.min(free.bottom())), pos2(free.right() - 8.0, free.bottom() - 8.0));
     if r.width() > 0.0 && r.height() > 0.0 { r } else { Rect::from_min_size(r.min, vec2(0.0, 0.0)) }
 }
 
@@ -482,14 +485,14 @@ mod tests {
     }
 
     #[test]
-    fn the_skyline_fills_the_free_part_under_the_search_box() {
+    fn the_skyline_fills_the_free_part_beside_the_cards() {
         for (w, h) in [(300.0, 200.0), (1100.0, 700.0), (50.0, 30.0)] {
             let free = Rect::from_min_size(pos2(10.0, 10.0), vec2(w, h));
             let r = view_rect(free);
             assert!(free.contains_rect(r) || r.height() <= 0.0, "{w}×{h}: {r:?}");
             assert!(r.top() >= free.top() + 44.0 - 1e-3 || r.height() <= 0.0, "{w}×{h}: {r:?}");
             assert!(
-                r.height() <= 0.0 || ((r.width() - (w - 16.0)).abs() < 1e-3 && (r.bottom() - (free.bottom() - 8.0)).abs() < 1e-3),
+                r.height() <= 0.0 || ((r.right() - (free.right() - 8.0)).abs() < 1e-3 && (r.bottom() - (free.bottom() - 8.0)).abs() < 1e-3),
                 "{w}×{h}: {r:?}"
             );
         }

@@ -96,9 +96,17 @@ pub fn text_button(ui: &mut Ui, id: &str, label: &str, active: bool) -> Response
 /// A row of `items` (label, key) in `columns` columns, one chosen. Gives the index clicked, if any.
 pub fn segmented(ui: &mut Ui, id: &str, items: &[(&str, &str)], chosen: Option<usize>, columns: usize) -> Option<usize> {
     let t = Tokens::get(ui.ctx());
-    let columns = columns.clamp(1, items.len().max(1));
     let gap = 4.0;
     let width = ui.available_width();
+    // fewer columns when a label would not fit its button
+    let widest = items
+        .iter()
+        .map(|(label, _)| ui.painter().layout_no_wrap(crate::i18n::tr(label).to_string(), t.font(12.0), Color32::WHITE).size().x)
+        .fold(0.0, f32::max);
+    let mut columns = columns.clamp(1, items.len().max(1));
+    while columns > 1 && (width - gap * (columns as f32 - 1.0)) / (columns as f32) < widest + 16.0 {
+        columns -= 1;
+    }
     let cell_w = ((width - gap * (columns as f32 - 1.0)) / columns as f32).max(24.0);
     let rows = items.len().div_ceil(columns);
     let (area, _) = ui.allocate_exact_size(vec2(width, rows as f32 * 28.0 + (rows.saturating_sub(1)) as f32 * gap), Sense::hover());

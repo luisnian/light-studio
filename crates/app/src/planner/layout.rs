@@ -224,10 +224,8 @@ impl Page<'_> {
             ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
             let w = (ui.available_width() - 70.0).max(80.0);
             let mut buf = std::mem::take(&mut rt.coords);
-            let r = TextField::singleline("planner:coords", &mut buf)
-                .hint(crate::i18n::tr("Coordinates: 40.4168, -3.7038 or 40°25'N 3°42'W"))
-                .width(w)
-                .show(ui);
+            let r =
+                TextField::singleline("planner:coords", &mut buf).hint(crate::i18n::tr("Paste coordinates (decimal or degrees)")).width(w).show(ui);
             if r.committed() {
                 match super::coords::parse(&buf) {
                     Some((la, lo)) => {
