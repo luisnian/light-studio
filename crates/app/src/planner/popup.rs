@@ -27,11 +27,12 @@ pub(super) fn calc_rect(free: Rect) -> Rect {
 }
 
 /// The sections of the calculations card: name, what is in it.
-const CALC_SECTIONS: [(&str, &str); 4] = [
+const CALC_SECTIONS: [(&str, &str); 5] = [
     ("Focus and depth of field", "Hyperfocal, sharp range and tables"),
     ("Exposure", "Exposure value and settings for each light"),
     ("Stars and the Moon", "Star points and trails, the Moon in frame, distances"),
     ("Time-lapse and filters", "Photos and interval, ND filters"),
+    ("Panorama", "Rows, columns and shots for a scene"),
 ];
 
 /// Which part of a record is drawn: all of it (one column) or one of the two columns.
@@ -304,8 +305,10 @@ impl Page<'_> {
                 self.calc_subject(ui, st, rt);
                 self.calc_equiv(ui, st, rt);
             }
-            (_, 0) => self.timelapse_card(ui, st, rt),
-            _ => self.nd_card(ui, st, rt),
+            (3, 0) => self.timelapse_card(ui, st, rt),
+            (3, _) => self.nd_card(ui, st, rt),
+            (_, 0) => self.panorama_card(ui, st, rt),
+            _ => self.panorama_diagram(ui, st),
         };
         if two {
             ui.spacing_mut().item_spacing.x = 32.0;

@@ -643,7 +643,7 @@
  "Gear": "Material",
  "Ideal conditions": "Condiciones ideales",
  "Reference photos": "Fotos de referencia",
- "Shots": "Fotografías",
+ "Shots": "Disparos",
  "pending": "pendientes",
  "taken": "hechas",
  "Untitled shot": "Fotografía sin título",
@@ -679,5 +679,17 @@
  "Clouds: weather-model forecast (Open-Meteo), only up to": "Nubes: previsión del modelo meteorológico (Open-Meteo), solo hasta el",
  "It is not part of the astronomy.": "No forma parte del cálculo astronómico.",
  "The cloud forecast could not be loaded.": "No se pudo cargar la previsión de nubes.",
- "Finding the cloud forecast": "Buscando la previsión de nubes"
+ "Finding the cloud forecast": "Buscando la previsión de nubes",
+ "Panorama": "Panorámica",
+ "Rows, columns and shots for a scene": "Filas, columnas y disparos para una escena",
+ "Scene Width (°)": "Anchura de la escena (°)",
+ "Scene Height (°)": "Altura de la escena (°)",
+ "Overlap (%)": "Solape (%)",
+ "Camera in portrait": "Cámara en vertical",
+ "One Frame Covers": "Un fotograma abarca",
+ "Turn Between Shots": "Giro entre disparos",
+ "The Grid Covers": "La cuadrícula abarca",
+ "Turn the camera about the lens, not the body, or near objects will not line up. With wide lenses and 30 % overlap the stitch usually finds enough to join.": "Gira la cámara sobre el objetivo, no sobre el cuerpo, o los objetos cercanos no encajarán. Con angulares y un 30 % de solape, el ensamblado suele encontrar suficiente para unir.",
+ "That is a very large number of shots: try a wider lens or less overlap.": "Son muchísimos disparos: prueba un objetivo más ancho o menos solape.",
+ "The camera needs a focal length and a sensor.": "La cámara necesita una focal y un sensor."
 }

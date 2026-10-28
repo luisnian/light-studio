@@ -154,6 +154,10 @@ pub struct PlannerState {
     pub tl_exposure: f64,
     /// Star trails: the exposure to check (seconds).
     pub trail_s: f64,
+    /// The panorama planner: the scene's width and height (degrees) and the overlap (percent).
+    pub pano_w: f64,
+    pub pano_h: f64,
+    pub pano_overlap: f64,
     /// What to line the Sun or the Moon up with (latitude, longitude), and its top's height above the camera (m).
     pub target: Option<[f64; 2]>,
     pub target_height: f64,
@@ -337,6 +341,9 @@ impl Default for PlannerState {
             bracket_count: 3,
             tl_exposure: 10.0,
             trail_s: 20.0,
+            pano_w: 180.0,
+            pano_h: 40.0,
+            pano_overlap: 30.0,
             target: None,
             target_height: 0.0,
             plans: Vec::new(),
@@ -432,6 +439,9 @@ impl PlannerState {
         self.bracket_count = self.bracket_count.clamp(3, 15) | 1;
         self.tl_exposure = clamp(self.tl_exposure, 0.001, 3600.0, d.tl_exposure);
         self.trail_s = clamp(self.trail_s, 0.1, 7200.0, d.trail_s);
+        self.pano_w = clamp(self.pano_w, 1.0, 360.0, d.pano_w);
+        self.pano_h = clamp(self.pano_h, 1.0, 180.0, d.pano_h);
+        self.pano_overlap = clamp(self.pano_overlap, 5.0, 90.0, d.pano_overlap);
         self.find_az = clamp(self.find_az, 0.0, 360.0, d.find_az);
         self.find_alt = clamp(self.find_alt, -90.0, 90.0, d.find_alt);
         self.find_tol = clamp(self.find_tol, 0.1, 45.0, d.find_tol);
@@ -2166,6 +2176,26 @@ mod tests {
         draw(&mut app, vec2(1600.0, 1000.0));
         app.planner.clouds = Some(((0, 0), now_unix(), Err("offline".into())));
         draw(&mut app, vec2(1600.0, 1000.0));
+    }
+
+    #[test]
+    fn the_panorama_section_draws_for_any_camera_and_scene() {
+        for (focal, w, h, o, portrait) in [
+            (24.0, 180.0, 40.0, 30.0, false),
+            (14.0, 360.0, 180.0, 90.0, true),
+            (600.0, 360.0, 180.0, 5.0, false),
+            (f64::NAN, f64::NAN, -3.0, f64::INFINITY, true),
+        ] {
+            let mut app = new_app();
+            app.ui.planner = PlannerState { placed: true, focal, pano_w: w, pano_h: h, pano_overlap: o, portrait, ..Default::default() };
+            app.planner.calc_open = true;
+            app.planner.calc_section = 4;
+            draw(&mut app, vec2(1400.0, 900.0));
+            draw(&mut app, vec2(500.0, 900.0));
+        }
+        let mut st = PlannerState { pano_w: 9e9, pano_h: f64::NAN, pano_overlap: -4.0, ..Default::default() };
+        st.sane();
+        assert_eq!((st.pano_w, st.pano_h, st.pano_overlap), (360.0, 40.0, 5.0));
     }
 
     #[test]

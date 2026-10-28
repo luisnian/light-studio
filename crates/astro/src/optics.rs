@@ -167,6 +167,61 @@ pub fn field_of_view(size: f64, focal: f64) -> Option<f64> {
     (size.is_finite() && focal.is_finite() && size > 0.0 && focal > 0.0).then(|| 2.0 * (size / (2.0 * focal)).atan().to_degrees())
 }
 
+/// A panorama shot as a grid of frames.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PanoramaPlan {
+    pub columns: u32,
+    pub rows: u32,
+    /// Angle covered by one frame across and up, degrees.
+    pub fov_w: f64,
+    pub fov_h: f64,
+    /// Angle between the centres of two neighbouring frames, degrees.
+    pub step_w: f64,
+    pub step_h: f64,
+    /// Angle the whole grid covers, degrees (at least what was asked for; the full circle when it closes on itself).
+    pub covered_w: f64,
+    pub covered_h: f64,
+}
+
+impl PanoramaPlan {
+    pub fn shots(&self) -> u32 {
+        self.columns.saturating_mul(self.rows)
+    }
+}
+
+/// The frames needed to cover `total` degrees with frames of `fov` degrees overlapping by `overlap` (a fraction): the step
+/// is the frame's angle less the overlap, measured in angle. Across a flat (rectilinear) picture the stretched edges hold
+/// more pixels per degree than the middle, so the overlap in pixels is at least this, never less.
+fn frames_for(total: f64, fov: f64, overlap: f64, closes: bool) -> (u32, f64, f64) {
+    let step = fov * (1.0 - overlap);
+    let n = if closes {
+        (total / step - 1e-9).ceil()
+    } else if total <= fov {
+        1.0
+    } else {
+        ((total - fov) / step - 1e-9).ceil() + 1.0
+    };
+    let n = n.clamp(1.0, 1000.0);
+    let covered = if closes { total } else { fov + (n - 1.0) * step };
+    (n as u32, step, covered)
+}
+
+/// The grid of frames for a scene `width_deg` across and `height_deg` high, shot with frames of `frame_w` x `frame_h`
+/// millimetres of sensor (turned for portrait) at `focal` millimetres, each overlapping the next by `overlap` (0.05 to 0.9).
+/// A scene of 360 degrees closes on itself. It assumes the camera turns about the lens's entrance pupil.
+pub fn panorama(frame_w: f64, frame_h: f64, focal: f64, width_deg: f64, height_deg: f64, overlap: f64) -> Option<PanoramaPlan> {
+    if !(width_deg.is_finite() && height_deg.is_finite() && overlap.is_finite() && width_deg > 0.0 && height_deg > 0.0) {
+        return None;
+    }
+    let (fov_w, fov_h) = (field_of_view(frame_w, focal)?, field_of_view(frame_h, focal)?);
+    let overlap = overlap.clamp(0.05, 0.9);
+    let width = width_deg.min(360.0);
+    let height = height_deg.min(180.0);
+    let (columns, step_w, covered_w) = frames_for(width, fov_w, overlap, width >= 360.0);
+    let (rows, step_h, covered_h) = frames_for(height, fov_h, overlap, false);
+    Some(PanoramaPlan { columns, rows, fov_w, fov_h, step_w, step_h, covered_w, covered_h })
+}
+
 /// Hyperfocal distance, millimetres.
 pub fn hyperfocal(focal: f64, fnumber: f64, coc: f64) -> Option<f64> {
     depth_of_field(focal, fnumber, coc, focal * 2.0 + 1.0).map(|d| d.hyperfocal)
@@ -420,5 +475,41 @@ mod tests {
         let f = equivalent_focal(35.0, &apsc, &ff).unwrap_or(0.0);
         assert!((f - 53.7).abs() < 1.0, "{f}");
         assert!(hyperfocal(24.0, 8.0, 0.029).is_some());
+    }
+
+    #[test]
+    fn panorama_grid_covers_what_was_asked() {
+        // full frame, 24 mm: 73.7 x 53.1 degrees a frame; 30 % overlap → steps of 51.6 and 37.2
+        let p = panorama(36.0, 24.0, 24.0, 180.0, 40.0, 0.3).unwrap();
+        assert!((p.fov_w - 73.74).abs() < 0.05 && (p.fov_h - 53.13).abs() < 0.05);
+        assert_eq!((p.columns, p.rows), (4, 1));
+        assert!(p.covered_w >= 180.0 && p.covered_h >= 40.0);
+        // one fewer column would not cover it
+        assert!(p.fov_w + (f64::from(p.columns) - 2.0) * p.step_w < 180.0);
+        // a scene that fits one frame is one shot
+        assert_eq!(panorama(36.0, 24.0, 24.0, 60.0, 40.0, 0.3).unwrap().shots(), 1);
+        // more overlap never needs fewer shots; a longer lens never needs fewer either
+        let shots = |f: f64, o: f64| panorama(36.0, 24.0, f, 360.0, 90.0, o).unwrap().shots();
+        assert!(shots(24.0, 0.5) >= shots(24.0, 0.2) && shots(50.0, 0.3) >= shots(24.0, 0.3));
+        // the full circle closes: n frames of step s go round exactly
+        let c = panorama(36.0, 24.0, 24.0, 360.0, 30.0, 0.3).unwrap();
+        assert!(f64::from(c.columns) * c.step_w >= 360.0 - 1e-6 && (f64::from(c.columns) - 1.0) * c.step_w < 360.0);
+    }
+
+    #[test]
+    fn panorama_refuses_nonsense() {
+        for (w, h, f, a, b, o) in [
+            (36.0, 24.0, 0.0, 90.0, 30.0, 0.3),
+            (36.0, 24.0, -1.0, 90.0, 30.0, 0.3),
+            (0.0, 24.0, 24.0, 90.0, 30.0, 0.3),
+            (36.0, 24.0, 24.0, f64::NAN, 30.0, 0.3),
+            (36.0, 24.0, 24.0, 90.0, 0.0, 0.3),
+            (36.0, 24.0, 24.0, 90.0, 30.0, f64::NAN),
+        ] {
+            assert!(panorama(w, h, f, a, b, o).is_none());
+        }
+        // absurd inputs stay bounded
+        let p = panorama(36.0, 24.0, 1e6, 1e9, 1e9, 5.0).unwrap();
+        assert!(p.columns <= 1000 && p.rows <= 1000);
     }
 }

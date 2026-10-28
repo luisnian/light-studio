@@ -103,6 +103,79 @@ impl Page<'_> {
         });
     }
 
+    /// The grid for a panorama: the scene's size and the overlap against the camera set in the Exposure card.
+    pub(super) fn panorama_card(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime) {
+        subhead(ui, "Panorama");
+        labelled_number(ui, rt, "panoW", "Scene Width (°)", &mut st.pano_w, (1.0, 360.0), 0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+            for w in [90.0, 180.0, 270.0, 360.0] {
+                if text_button(ui, &format!("plannerPanoW{w}"), &format!("{w:.0}°"), (st.pano_w - w).abs() < 0.5).clicked() {
+                    st.pano_w = w;
+                }
+            }
+        });
+        labelled_number(ui, rt, "panoH", "Scene Height (°)", &mut st.pano_h, (1.0, 180.0), 0);
+        labelled_number(ui, rt, "panoOverlap", "Overlap (%)", &mut st.pano_overlap, (5.0, 90.0), 0);
+        if text_button(ui, "plannerPanoPortrait", "Camera in portrait", st.portrait).clicked() {
+            st.portrait = !st.portrait;
+        }
+        ui.add_space(4.0);
+        match self.panorama_plan(st) {
+            Some(p) => {
+                row(ui, "pano:shots", "Shots", &format!("{} × {} = {}", p.columns, p.rows, p.shots()), None);
+                row(ui, "pano:frame", "One Frame Covers", &format!("{:.0}° × {:.0}°", p.fov_w, p.fov_h), None);
+                row(ui, "pano:step", "Turn Between Shots", &format!("{:.1}° · {:.1}°", p.step_w, p.step_h), None);
+                row(ui, "pano:covered", "The Grid Covers", &format!("{:.0}° × {:.0}°", p.covered_w, p.covered_h), None);
+                note(
+                    ui,
+                    crate::i18n::tr(
+                        "Turn the camera about the lens, not the body, or near objects will not line up. With wide lenses and 30 % overlap the stitch usually finds enough to join.",
+                    ),
+                );
+                if p.shots() >= 200 {
+                    note(ui, crate::i18n::tr("That is a very large number of shots: try a wider lens or less overlap."));
+                }
+            }
+            None => note(ui, crate::i18n::tr("The camera needs a focal length and a sensor.")),
+        }
+    }
+
+    /// The grid worked out for the camera of the Exposure card.
+    fn panorama_plan(&self, st: &PlannerState) -> Option<optics::PanoramaPlan> {
+        let sensor = SENSORS.get(st.sensor).copied().unwrap_or(SENSORS[0]);
+        let (w, h) = if st.portrait { (sensor.height, sensor.width) } else { (sensor.width, sensor.height) };
+        optics::panorama(w, h, st.focal, st.pano_w, st.pano_h, st.pano_overlap / 100.0)
+    }
+
+    /// The frames drawn as they overlap (a sketch of the grid, not of the picture).
+    pub(super) fn panorama_diagram(&mut self, ui: &mut Ui, st: &PlannerState) {
+        let t = self.t;
+        let Some(p) = self.panorama_plan(st) else { return };
+        // too many to draw one by one: the sketch would be a smear
+        if p.columns > 24 || p.rows > 12 {
+            return;
+        }
+        let w = ui.available_width().clamp(120.0, 520.0);
+        let (cols, rows) = (f64::from(p.columns), f64::from(p.rows));
+        let span_w = p.fov_w + (cols - 1.0) * p.step_w;
+        let span_h = p.fov_h + (rows - 1.0) * p.step_h;
+        let scale = f64::from(w) / span_w.max(1e-6);
+        let h = ((span_h * scale) as f32).clamp(24.0, 360.0);
+        let scale = scale.min(f64::from(h) / span_h.max(1e-6));
+        let (area, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
+        let origin = area.min;
+        for r in 0..p.rows {
+            for c in 0..p.columns {
+                let x = f64::from(c) * p.step_w * scale;
+                let y = f64::from(r) * p.step_h * scale;
+                let rect = Rect::from_min_size(origin + vec2(x as f32, y as f32), vec2((p.fov_w * scale) as f32, (p.fov_h * scale) as f32));
+                ui.painter().rect_filled(rect, 2.0, t.accent.gamma_multiply(0.14));
+                ui.painter().rect_stroke(rect, 2.0, Stroke::new(1.0, t.accent.gamma_multiply(0.8)), StrokeKind::Inside);
+            }
+        }
+    }
+
     /// Neutral density filters.
     pub(super) fn nd_card(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime) {
         let t = self.t;
