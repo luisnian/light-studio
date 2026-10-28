@@ -32,6 +32,18 @@ cargo test
 
 Genera `dist/Light-Studio-<versión>.dmg` (firma ad hoc; la primera vez, clic derecho ▸ Abrir).
 
+### Instalador para Windows
+
+En PowerShell, con Rust, Visual Studio Build Tools (C++) e [Inno Setup 6](https://jrsoftware.org/isdl.php):
+
+```powershell
+.\scripts\make-installer.ps1
+```
+
+Genera `dist\Light-Studio-<versión>-setup.exe`. También se construye solo en GitHub:
+pestaña *Actions* ▸ *Windows installer* ▸ *Run workflow*, y el instalador se descarga como artefacto.
+En Windows la clave PDI se lee de `LIGHT_STUDIO_PDI_KEY` (no hay llavero).
+
 Requiere Rust 1.90 o superior. Funciona en macOS, Linux y Windows (wgpu).
 
 ## Variables de entorno (opcionales)
