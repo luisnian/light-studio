@@ -167,6 +167,8 @@ fn visuals(t: &Tokens) -> egui::Visuals {
 
 /// Sets the visuals and spacing of both looks from the tokens.
 pub fn apply(ctx: &Context) {
+    // Light Studio is always dark, whatever the system's appearance is
+    ctx.set_theme(egui::ThemePreference::Dark);
     ctx.set_visuals_of(egui::Theme::Dark, visuals(&Tokens::dark()));
     ctx.set_visuals_of(egui::Theme::Light, visuals(&Tokens::light()));
     ctx.all_styles_mut(|s| {

@@ -23,6 +23,15 @@ cargo run --release -p light-studio
 cargo test
 ```
 
+### .dmg para macOS
+
+```sh
+./scripts/make-dmg.sh            # para el chip de este Mac
+./scripts/make-dmg.sh universal  # Apple Silicon + Intel
+```
+
+Genera `dist/Light-Studio-<versión>.dmg` (firma ad hoc; la primera vez, clic derecho ▸ Abrir).
+
 Requiere Rust 1.90 o superior. Funciona en macOS, Linux y Windows (wgpu).
 
 ## Variables de entorno (opcionales)
