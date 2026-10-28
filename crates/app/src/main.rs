@@ -8,8 +8,11 @@ use light_studio::{App, state::UiState, theme};
 fn main() -> eframe::Result {
     let _ = env_logger_init();
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon-512.png")).ok();
-    let mut viewport =
-        egui::ViewportBuilder::default().with_title("Light Studio").with_inner_size([1360.0, 860.0]).with_min_inner_size([900.0, 600.0]);
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("Light Studio")
+        .with_inner_size([1360.0, 860.0])
+        .with_maximized(true)
+        .with_min_inner_size([900.0, 600.0]);
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);
     }

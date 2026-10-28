@@ -34,7 +34,14 @@ pub struct App {
     toasts: Vec<Toast>,
     saved: String,
     saved_at: f64,
+    /// When the opening fade began (egui time); `None` before the first frame.
+    open_fade_start: Option<f64>,
+    /// The opening fade is still running (only in the real app: tests and snapshots stay still).
+    open_fade: bool,
 }
+
+/// How long the opening fade lasts.
+const OPEN_FADE_SECONDS: f64 = 0.4;
 
 impl App {
     pub fn new(ctx: egui::Context, ui: UiState, styled: bool) -> App {
@@ -55,7 +62,28 @@ impl App {
             toasts: Vec::new(),
             saved: String::new(),
             saved_at: 0.0,
+            open_fade_start: None,
+            open_fade: styled,
         }
+    }
+
+    /// The opening fade: the window shows the dark backdrop and the interface comes up through it in 400 ms
+    /// (ease-out). A see-through cover over the whole window does it, so it works the same on every system.
+    fn open_fade_overlay(&mut self, ctx: &egui::Context) {
+        if !self.open_fade {
+            return;
+        }
+        let now = ctx.input(|i| i.time);
+        let start = *self.open_fade_start.get_or_insert(now);
+        let p = ((now - start) / OPEN_FADE_SECONDS).clamp(0.0, 1.0);
+        if p >= 1.0 {
+            self.open_fade = false;
+            return;
+        }
+        let cover = (1.0 - p).powi(3) as f32;
+        let colour = ctx.global_style().visuals.panel_fill.gamma_multiply(cover);
+        ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("open-fade"))).rect_filled(ctx.content_rect(), 0.0, colour);
+        ctx.request_repaint();
     }
 
     /// A message at the bottom of the window.
@@ -134,6 +162,7 @@ impl eframe::App for App {
             settings::show(self, &ctx);
         }
         self.show_toasts(&ctx);
+        self.open_fade_overlay(&ctx);
         let now = ctx.input(|i| i.time);
         self.save(now, false);
     }
