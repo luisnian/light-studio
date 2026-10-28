@@ -30,6 +30,7 @@ mod pois;
 mod viewfinder;
 pub use pois::Gone;
 mod popup;
+mod saved;
 mod shade;
 mod skycal;
 mod skylayers;
@@ -134,6 +135,8 @@ pub struct PlannerState {
     pub lenses: Vec<lenses::Lens>,
     pub lens: Option<usize>,
     pub lens_draft: lenses::Lens,
+    /// The searches of the Find card kept, with their places.
+    pub searches: Vec<saved::SavedSearch>,
     /// Where the planner's map looks (centre and zoom).
     pub map: crate::map::MapView,
     /// Places kept by name, to come back to.
@@ -322,6 +325,7 @@ impl Default for PlannerState {
             lenses: Vec::new(),
             lens: None,
             lens_draft: lenses::Lens::default(),
+            searches: Vec::new(),
             map: crate::map::MapView { lat: 40.4168, lon: -3.7038, zoom: 9.0 },
             saved: Vec::new(),
             tl_event_h: 3.0,
@@ -418,6 +422,7 @@ impl PlannerState {
         self.distance = clamp(self.distance, 0.05, 100_000.0, d.distance);
         self.megapixels = clamp(self.megapixels, 0.5, 400.0, d.megapixels);
         self.sane_lenses();
+        self.sane_searches();
         self.tl_event_h = clamp(self.tl_event_h, 0.01, 240.0, d.tl_event_h);
         self.tl_clip = clamp(self.tl_clip, 0.1, 3600.0, d.tl_clip);
         self.tl_fps = clamp(self.tl_fps, 1.0, 240.0, d.tl_fps);
@@ -540,6 +545,11 @@ pub struct Runtime {
     /// (the body, the place, the first day, the number of days).
     /// The place the time zone was last asked for (latitude and longitude bits), so a failed try is not repeated every frame.
     zone_asked: Option<(u64, u64)>,
+    /// The next date of each saved search, by what it was worked out for, and whether a check is running.
+    saved_next: Option<(u64, Vec<Option<f64>>)>,
+    saved_next_pending: bool,
+    /// Run the Find card's search with the conditions just loaded (a saved search was chosen).
+    find_load: bool,
     find_reach: Option<((u8, u64, u64, u64, u32), Box<[bool; 360]>)>,
     computed: Option<Arc<Computed>>,
     /// Text being typed in the number fields, by widget id.
@@ -934,6 +944,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
 
     let c = refresh(&app.ui.planner, &mut app.planner, now);
     zone::ask(app, ui.ctx());
+    saved::refresh(app);
     let obs = observer(&app.ui.planner);
     let minute = cursor_minute(&app.ui.planner, &c, now);
     let at = c.start + minute * 60.0;
@@ -2121,6 +2132,22 @@ mod tests {
             }
             assert!(app.planner.find_open, "the card stays open");
         }
+    }
+
+    #[test]
+    fn saved_searches_draw_and_load() {
+        let mut app = new_app();
+        let spec = saved::Spec { az: 120.0, tol: 5.0, ..Default::default() };
+        app.ui.planner.searches = vec![saved::SavedSearch { lat: 43.3, lon: -2.0, place: "Bilbao".into(), spec: spec.clone() }];
+        app.planner.saved_next = Some((0, vec![Some(now_unix() + 86_400.0)]));
+        app.planner.find_open = true;
+        draw(&mut app, vec2(1400.0, 900.0));
+        // loading one puts the place and the conditions back and asks for the search to be run
+        let mut st = PlannerState::default();
+        let one = app.ui.planner.searches[0].clone();
+        set_place(&mut st, one.lat, one.lon, one.place.clone());
+        one.spec.apply(&mut st);
+        assert_eq!((st.place.as_str(), st.find_az, st.find_tol), ("Bilbao", 120.0, 5.0));
     }
 
     #[test]

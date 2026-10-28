@@ -5,9 +5,10 @@
 //! A click on a result moves the time bar to it.
 
 use light_studio_astro::moon::moon_phase;
-use light_studio_astro::search::{Conditions, Hit, Target, find_with};
+use light_studio_astro::search::{Hit, Target, find_with};
 use light_studio_astro::sun::sun_horizontal;
 
+use super::saved::{self, Spec};
 use super::skylayers::{ASTRO_LIGHT, BLUE_LIGHT, DAY_LIGHT, GOLDEN_LIGHT, MOONRISE, NAUTICAL_LIGHT, NIGHT_LIGHT, SUNRISE, SUNSET, light_kind};
 use super::*;
 use crate::map::{Cam, MAX_ZOOM, MIN_ZOOM, MapView, draw_tiles};
@@ -307,44 +308,18 @@ impl Page<'_> {
         let skyline = rt.horizon.as_ref().filter(|h| h.key == super::horizon::key_of(st)).and_then(|h| h.data.as_ref().ok().cloned());
         let waiting = st.find_skyline && skyline.is_none();
         ui.add_enabled_ui(!waiting, |ui| {
-            if text_button(ui, "plannerFindGo", "Find the Dates", false).clicked() {
+            let go = text_button(ui, "plannerFindGo", "Find the Dates", false).clicked() | std::mem::take(&mut rt.find_load);
+            if go {
                 let start = self.c.start;
-                let target = body_target(st);
-                let alt = st.find_use_alt.then_some(st.find_alt);
-                let conditions = Conditions {
-                    sun_alt: match st.find_light {
-                        1 => Some((-4.0, 6.0)),
-                        2 => Some((-6.0, -4.0)),
-                        3 => Some((-90.0, -18.0)),
-                        _ => None,
-                    },
-                    moon_illumination: st.find_use_ill.then(|| (st.find_ill[0] / 100.0, st.find_ill[1] / 100.0)),
-                    moon_alt_max: st.find_no_moon.then_some(-1.0),
-                    skyline: if st.find_skyline { skyline.as_deref().map(|s| (s, st.find_margin[0], st.find_margin[1])) } else { None },
-                };
-                rt.found_dates = Some(find_with(target, self.obs, start, st.find_days as u32, st.find_az, alt, st.find_tol, conditions));
-                let body = crate::i18n::tr(if st.find_core {
-                    "Milky Way"
-                } else if st.find_sun {
-                    "Sun"
-                } else {
-                    "Moon"
-                });
-                let mut label = format!("{body} · {} {:.0}° ± {:.1}°", crate::i18n::tr("Azimuth"), st.find_az, st.find_tol);
-                if let Some(a) = alt {
-                    label.push_str(&format!(" · {} {a:.0}° ± {:.1}°", crate::i18n::tr("Elevation"), st.find_tol));
+                // (the skyline is the one condition a saved search cannot hold)
+                let mut spec = Spec::of(&PlannerState { find_skyline: false, ..st.clone() }).unwrap_or_default();
+                spec.days = st.find_days;
+                let mut conditions = spec.conditions();
+                if st.find_skyline {
+                    conditions.skyline = skyline.as_deref().map(|s| (s, st.find_margin[0], st.find_margin[1]));
                 }
-                if let Some(name) =
-                    [None, Some("Golden hour"), Some("Blue hour"), Some("Dark sky")].get(usize::from(st.find_light)).copied().flatten()
-                {
-                    label.push_str(&format!(" · {}", crate::i18n::tr(name)));
-                }
-                if st.find_use_ill {
-                    label.push_str(&format!(" · {:.0}–{:.0} % {}", st.find_ill[0], st.find_ill[1], crate::i18n::tr("lit")));
-                }
-                if st.find_no_moon {
-                    label.push_str(&format!(" · {}", crate::i18n::tr("Moon down")));
-                }
+                rt.found_dates = Some(find_with(spec.target(), self.obs, start, st.find_days as u32, st.find_az, spec.alt, st.find_tol, conditions));
+                let mut label = spec.label();
                 if st.find_skyline {
                     label.push_str(&format!(" · {} {:.1}° … {:.1}°", crate::i18n::tr("over the skyline"), st.find_margin[0], st.find_margin[1]));
                 }
@@ -354,6 +329,23 @@ impl Page<'_> {
                 rt.found_sorted_by = None;
                 if !rt.found_moon && rt.found_sort == SORT_PHASE {
                     rt.found_sort = SORT_DATE;
+                }
+            }
+        });
+        let spec = Spec::of(st);
+        let tip = if spec.is_some() {
+            "Keep these conditions with the place and see when they next happen"
+        } else {
+            "A search over the skyline cannot be saved: it needs the terrain"
+        };
+        let full = st.searches.len() >= saved::MAX_SEARCHES;
+        ui.add_enabled_ui(spec.is_some() && !full, |ui| {
+            if text_button(ui, "plannerFindSave", "Save the Search", false).on_hover_text(crate::i18n::tr(tip)).clicked()
+                && let Some(spec) = spec
+            {
+                let one = saved::SavedSearch { place: st.place.clone(), lat: st.lat, lon: st.lon, spec };
+                if !st.searches.contains(&one) {
+                    st.searches.push(one);
                 }
             }
         });
@@ -457,6 +449,7 @@ impl Page<'_> {
     /// The dates found: a table in the way of the planning apps, the right cell coloured by the kind of light.
     fn find_results(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime) {
         let t = self.t;
+        self.saved_list(ui, st, rt);
         let Some(hits) = rt.found_dates.clone() else {
             ui.add_space((ui.available_height() / 3.0).max(40.0));
             ui.vertical_centered(|ui| note(ui, crate::i18n::tr("Choose the direction and press Find the Dates.")));
