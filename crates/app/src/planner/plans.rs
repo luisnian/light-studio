@@ -40,6 +40,8 @@ pub struct Plan {
     pub notes: String,
     /// Remind this many minutes before (0: no reminder).
     pub alarm: u32,
+    /// How the shot is framed (direction, tilt, focal length), when it was kept with the viewfinder showing.
+    pub frame: Option<super::viewfinder::FrameShot>,
 }
 
 impl Default for Plan {
@@ -57,6 +59,7 @@ impl Default for Plan {
             target_height: 0.0,
             notes: String::new(),
             alarm: 60,
+            frame: None,
         }
     }
 }
@@ -142,6 +145,9 @@ pub fn open_plan(app: &mut App, id: u64) -> bool {
     st.target = p.target;
     st.target_height = p.target_height;
     st.open_plan = Some(id);
+    if let Some(frame) = p.frame {
+        frame.apply(st);
+    }
     if let Some([la, lo]) = p.target {
         // both ends in sight
         st.map.lat = (p.lat + la) / 2.0;
@@ -334,6 +340,7 @@ impl Page<'_> {
             target_height: st.target_height,
             notes: String::new(),
             alarm: st.alarm,
+            frame: st.show_viewfinder.then(|| super::viewfinder::FrameShot::of(st)),
         };
         plan.tidy();
         st.open_plan = Some(plan.id);

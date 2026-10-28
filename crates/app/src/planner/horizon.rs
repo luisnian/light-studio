@@ -131,7 +131,7 @@ pub(super) fn fetch(app: &mut App) {
 }
 
 /// The sky's colour for the Sun at `alt` degrees: night, dusk, day.
-fn sky_colours(sun_alt: f64, dark_ui: bool) -> (Color32, Color32) {
+pub(super) fn sky_colours(sun_alt: f64, dark_ui: bool) -> (Color32, Color32) {
     let k = ((sun_alt + 14.0) / 20.0).clamp(0.0, 1.0) as f32;
     let night = (Color32::from_rgb(8, 12, 28), Color32::from_rgb(26, 36, 66));
     let day = (Color32::from_rgb(82, 128, 196), Color32::from_rgb(176, 205, 232));

@@ -628,5 +628,14 @@
  "Sun at": "Sol a",
  "of the Moon lit": "de la Luna iluminada",
  "behind": "por detrás",
- "the skyline of the ground heights": "del horizonte según las alturas del terreno"
+ "the skyline of the ground heights": "del horizonte según las alturas del terreno",
+ "Viewfinder": "Visor",
+ "Show the Viewfinder": "Mostrar el visor",
+ "Hide the Viewfinder": "Ocultar el visor",
+ "Tilt (°)": "Inclinación (°)",
+ "Aim at": "Apuntar a",
+ "Compare": "Comparar",
+ "Portrait": "Vertical",
+ "Skyline from the ground heights": "Horizonte de las alturas del terreno",
+ "Flat horizon: turn on Mountains for the real skyline": "Horizonte plano: activa Montañas para el horizonte real"
 }

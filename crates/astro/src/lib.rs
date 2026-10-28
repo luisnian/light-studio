@@ -10,6 +10,7 @@
 
 pub mod align;
 pub mod eclipse;
+pub mod frame;
 pub mod horizon;
 pub mod info;
 pub mod moon;
