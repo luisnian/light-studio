@@ -60,10 +60,26 @@ impl Page<'_> {
         labelled_number(ui, rt, "tlEvent", "Event Length (hours)", &mut st.tl_event_h, (0.01, 240.0), 2);
         labelled_number(ui, rt, "tlClip", "Clip Length (s)", &mut st.tl_clip, (0.1, 3600.0), 1);
         labelled_number(ui, rt, "tlFps", "Frame Rate (fps)", &mut st.tl_fps, (1.0, 240.0), 0);
-        match optics::timelapse(st.tl_event_h * 3600.0, st.tl_clip, st.tl_fps) {
-            Some((photos, interval)) => {
-                row(ui, "tl:photos", "Photos", &photos.to_string(), None);
-                row(ui, "tl:interval", "Interval", &seconds_text(interval), None);
+        let t = self.t;
+        ui.horizontal(|ui| {
+            ui.allocate_ui_with_layout(vec2(150.0, 26.0), egui::Layout::left_to_right(Align::Center), |ui| {
+                ui.label(egui::RichText::new(crate::i18n::tr("Exposure of Each Frame")).font(t.font(12.5)).color(t.text_dim));
+            });
+            shutter_field(ui, rt, "tlExposure", &mut st.tl_exposure, 78.0);
+        });
+        match optics::timelapse_plan(st.tl_event_h * 3600.0, st.tl_clip, st.tl_fps, st.tl_exposure) {
+            Some(p) => {
+                row(ui, "tl:photos", "Photos", &p.photos.to_string(), None);
+                row(ui, "tl:interval", "Interval", &seconds_text(p.interval), None);
+                row(ui, "tl:gap", "Rest between Frames", &if p.gap >= 0.0 { seconds_text(p.gap) } else { "—".to_string() }, None);
+                if !p.feasible {
+                    note(
+                        ui,
+                        crate::i18n::tr(
+                            "The exposure does not fit in the interval (the camera needs about 1 s to save each frame): shorten the exposure or lengthen the clip.",
+                        ),
+                    );
+                }
             }
             None => note(ui, crate::i18n::tr("The clip is shorter than a frame.")),
         }
@@ -111,6 +127,25 @@ impl Page<'_> {
             Some(s) => {
                 row(ui, "nd:shutter", "Shutter with the Filter", &shutter_text(s), None);
                 row(ui, "nd:factor", "Light Cut", &format!("× {:.0}", 2f64.powf(st.nd_stops)), None);
+                if s > optics::CAMERA_MAX_SHUTTER {
+                    note(ui, crate::i18n::tr("Longer than 30 s: set Bulb and time it with a remote or the intervalometer."));
+                }
+                subhead(ui, "Exposure bracket");
+                labelled_number(ui, rt, "bracketStep", "Step (stops)", &mut st.bracket_step, (0.1, 4.0), 1);
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+                    for n in [3_u32, 5, 7, 9] {
+                        if text_button(ui, &format!("plannerBracket{n}"), &format!("{n}"), st.bracket_count == n).clicked() {
+                            st.bracket_count = n;
+                        }
+                    }
+                });
+                if let Some(times) = optics::bracket(s, st.bracket_step, st.bracket_count) {
+                    let line = times.iter().map(|x| shutter_text(*x)).collect::<Vec<_>>().join("  ·  ");
+                    note(ui, &line);
+                    let total: f64 = times.iter().sum();
+                    row(ui, "nd:bracketTotal", "Time of the Bracket", &seconds_text(total), None);
+                }
             }
             None => note(ui, crate::i18n::tr("That filter is out of range.")),
         }

@@ -118,6 +118,50 @@ pub fn timelapse(event_seconds: f64, clip_seconds: f64, fps: f64) -> Option<(u32
     (1.0..=1.0e6).contains(&photos).then(|| (photos as u32, event_seconds / photos))
 }
 
+/// The longest shutter time (s) the camera sets by itself; longer needs Bulb (a Canon EOS 6D stops at 30 s).
+pub const CAMERA_MAX_SHUTTER: f64 = 30.0;
+
+/// An exposure bracket: `count` shutter times (an odd number, 3 to 15) `step` stops apart, the middle one the base
+/// time, the shortest first. `None` for numbers out of range.
+pub fn bracket(base_seconds: f64, step: f64, count: u32) -> Option<Vec<f64>> {
+    if !(base_seconds.is_finite()
+        && base_seconds > 0.0
+        && step.is_finite()
+        && (0.1..=4.0).contains(&step)
+        && (3..=15).contains(&count)
+        && count % 2 == 1)
+    {
+        return None;
+    }
+    let half = i64::from(count / 2);
+    Some((-half..=half).map(|i| base_seconds * 2f64.powf(step * i as f64)).collect())
+}
+
+/// A time-lapse with exposures in it: what [`timelapse_plan`] works out.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TimelapsePlan {
+    pub photos: u32,
+    /// Seconds from the start of one frame to the start of the next.
+    pub interval: f64,
+    /// Seconds left between the end of one exposure and the start of the next.
+    pub gap: f64,
+    /// Whether the gap is at least `MIN_GAP` (the camera needs a moment to save the frame).
+    pub feasible: bool,
+}
+
+/// The least gap (s) a camera needs between two exposures to write the frame (a rough, conservative figure).
+pub const MIN_GAP: f64 = 1.0;
+
+/// As [`timelapse`], also checking that the exposure (seconds) fits in the interval.
+pub fn timelapse_plan(event_seconds: f64, clip_seconds: f64, fps: f64, exposure: f64) -> Option<TimelapsePlan> {
+    if !(exposure.is_finite() && exposure > 0.0) {
+        return None;
+    }
+    let (photos, interval) = timelapse(event_seconds, clip_seconds, fps)?;
+    let gap = interval - exposure;
+    Some(TimelapsePlan { photos, interval, gap, feasible: gap >= MIN_GAP })
+}
+
 /// Angle of view (degrees) across `size` millimetres of sensor at a focal length (mm).
 pub fn field_of_view(size: f64, focal: f64) -> Option<f64> {
     (size.is_finite() && focal.is_finite() && size > 0.0 && focal > 0.0).then(|| 2.0 * (size / (2.0 * focal)).atan().to_degrees())
@@ -337,6 +381,32 @@ mod tests {
         assert!((s.pixel_pitch_um(CANON_6D_MEGAPIXELS) - pitch).abs() < 0.1);
         // 35.8 mm across at 24 mm: 71.5°
         assert!((field_of_view(s.width, 24.0).expect("valid") - 73.9).abs() < 0.5);
+    }
+
+    #[test]
+    fn brackets_are_centred_and_in_stops() {
+        let b = bracket(1.0, 1.0, 5).expect("valid");
+        assert_eq!(b, vec![0.25, 0.5, 1.0, 2.0, 4.0]);
+        let third = bracket(1.0, 1.0 / 3.0, 3).expect("valid");
+        assert!((third[0] - 2f64.powf(-1.0 / 3.0)).abs() < 1e-12 && third[1] == 1.0);
+        assert_eq!(bracket(1.0, 1.0, 4), None, "an even count has no middle");
+        assert_eq!(bracket(1.0, 0.0, 3), None);
+        assert_eq!(bracket(0.0, 1.0, 3), None);
+        assert_eq!(bracket(f64::NAN, 1.0, 3), None);
+        assert_eq!(bracket(1.0, 1.0, 99), None);
+    }
+
+    #[test]
+    fn a_timelapse_checks_that_the_exposure_fits() {
+        // 3 h into 20 s at 25 fps: 500 photos, one every 21.6 s
+        let p = timelapse_plan(3.0 * 3600.0, 20.0, 25.0, 15.0).expect("valid");
+        assert_eq!(p.photos, 500);
+        assert!((p.interval - 21.6).abs() < 1e-9 && (p.gap - 6.6).abs() < 1e-9 && p.feasible);
+        // a 30 s exposure cannot repeat every 21.6 s
+        let q = timelapse_plan(3.0 * 3600.0, 20.0, 25.0, 30.0).expect("valid");
+        assert!(q.gap < 0.0 && !q.feasible);
+        assert_eq!(timelapse_plan(3600.0, 20.0, 25.0, 0.0), None);
+        assert_eq!(timelapse_plan(3600.0, 0.0, 25.0, 1.0), None);
     }
 
     #[test]

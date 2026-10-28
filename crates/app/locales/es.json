@@ -605,5 +605,12 @@
  "Add lens": "Añadir objetivo",
  "Any lens": "Sin límites de objetivo",
  "Delete lens": "Borrar objetivo",
- "Canon EOS 6D": "Canon EOS 6D"
+ "Canon EOS 6D": "Canon EOS 6D",
+ "Exposure of Each Frame": "Exposición de cada fotograma",
+ "Rest between Frames": "Descanso entre fotogramas",
+ "The exposure does not fit in the interval (the camera needs about 1 s to save each frame): shorten the exposure or lengthen the clip.": "La exposición no cabe en el intervalo (la cámara necesita cerca de 1 s para guardar cada fotograma): acorta la exposición o alarga el clip.",
+ "Longer than 30 s: set Bulb and time it with a remote or the intervalometer.": "Más de 30 s: usa Bulb y cronométralo con un disparador remoto o el intervalómetro.",
+ "Exposure bracket": "Horquillado de exposición",
+ "Step (stops)": "Paso (pasos)",
+ "Time of the Bracket": "Duración del horquillado"
 }

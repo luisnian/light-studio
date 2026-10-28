@@ -140,6 +140,10 @@ pub struct PlannerState {
     /// Neutral density: the shutter time without the filter (seconds) and the filter's stops.
     pub nd_base: f64,
     pub nd_stops: f64,
+    /// Exposure bracket: the step (stops) and the number of frames; time-lapse: the exposure of each frame (seconds).
+    pub bracket_step: f64,
+    pub bracket_count: u32,
+    pub tl_exposure: f64,
     /// Star trails: the exposure to check (seconds).
     pub trail_s: f64,
     /// What to line the Sun or the Moon up with (latitude, longitude), and its top's height above the camera (m).
@@ -300,6 +304,9 @@ impl Default for PlannerState {
             tl_fps: 25.0,
             nd_base: 1.0 / 125.0,
             nd_stops: 6.0,
+            bracket_step: 1.0,
+            bracket_count: 3,
+            tl_exposure: 10.0,
             trail_s: 20.0,
             target: None,
             target_height: 0.0,
@@ -380,6 +387,9 @@ impl PlannerState {
         self.tl_fps = clamp(self.tl_fps, 1.0, 240.0, d.tl_fps);
         self.nd_base = clamp(self.nd_base, 1.0 / 32_000.0, 3600.0, d.nd_base);
         self.nd_stops = clamp(self.nd_stops, 0.0, 30.0, d.nd_stops);
+        self.bracket_step = clamp(self.bracket_step, 0.1, 4.0, d.bracket_step);
+        self.bracket_count = self.bracket_count.clamp(3, 15) | 1;
+        self.tl_exposure = clamp(self.tl_exposure, 0.001, 3600.0, d.tl_exposure);
         self.trail_s = clamp(self.trail_s, 0.1, 7200.0, d.trail_s);
         self.find_az = clamp(self.find_az, 0.0, 360.0, d.find_az);
         self.find_alt = clamp(self.find_alt, -90.0, 90.0, d.find_alt);
