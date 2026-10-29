@@ -703,5 +703,8 @@
  "Print / Save as PDF": "Imprimir / Guardar como PDF",
  "There is nowhere to write the sheet": "No hay dónde escribir la hoja",
  "Sheet opened: print it or save it as PDF from the browser": "Hoja abierta: imprímela o guárdala como PDF desde el navegador",
- "Sheet saved: {path}": "Hoja guardada: {path}"
+ "Sheet saved: {path}": "Hoja guardada: {path}",
+ "Remove the Target": "Quitar el objetivo",
+ "Enlarge the map to the whole card": "Ampliar el mapa a toda la tarjeta",
+ "Back to the normal size": "Volver al tamaño normal"
 }

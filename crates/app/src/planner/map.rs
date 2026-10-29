@@ -101,6 +101,10 @@ impl Page<'_> {
                     if ui.button(crate::i18n::tr("Set the Target Here")).clicked() {
                         chosen = Some((2, lat, lon));
                     }
+                    // always shown, grey when there is no target
+                    if ui.add_enabled(st.target.is_some(), egui::Button::new(crate::i18n::tr("Remove the Target"))).clicked() {
+                        chosen = Some((3, lat, lon));
+                    }
                 }
                 if chosen.is_some() {
                     ui.close();
@@ -122,7 +126,8 @@ impl Page<'_> {
                         self.new_plan_at(st, rt, lat, lon, None);
                         st.map_mode = MapMode::Plans;
                     }
-                    _ => st.target = Some([lat, lon]),
+                    2 => st.target = Some([lat, lon]),
+                    _ => st.target = None,
                 }
                 if what < 2 {
                     st.show_horizon = false;
@@ -290,6 +295,10 @@ impl Page<'_> {
                 let Some(at) = visible(&cam, wx, p.lat, p.lon, outer, blocked) else { continue };
                 let resp =
                     pin(ui, &painter, at, super::places::POI_RED, Icon::Pin, egui::Id::new(("planner-site", i)), format!("planner:mapSite:{i}"));
+                if p.fresh {
+                    ring_new(&painter, at - vec2(0.0, 14.0), ui.input(|i| i.time));
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
+                }
                 if resp.clicked() {
                     self.intents.push(Intent::OpenSite(i));
                 }
@@ -651,4 +660,21 @@ fn arrow_head(p: &egui::Painter, origin: Pos2, az: f64, length: f32, color: Colo
     let tip = origin + dir * length;
     let base = tip - dir * 14.0;
     p.add(Shape::convex_polygon(vec![tip + dir * 3.0, base + side * 6.0, base - side * 6.0], color, Stroke::NONE));
+}
+
+/// The ring that marks a point new from the phone: a dashed yellow circle, turning slowly.
+fn ring_new(painter: &egui::Painter, centre: Pos2, time: f64) {
+    const ARCS: usize = 14;
+    let colour = Color32::from_rgb(255, 214, 10);
+    let sector = std::f64::consts::TAU / ARCS as f64;
+    for k in 0..ARCS {
+        let a0 = time * 0.6 + k as f64 * sector;
+        let points: Vec<Pos2> = (0..=6)
+            .map(|j| {
+                let a = a0 + sector * 0.55 * f64::from(j) / 6.0;
+                centre + vec2(a.cos() as f32, a.sin() as f32) * 21.0
+            })
+            .collect();
+        painter.add(Shape::line(points, Stroke::new(3.0, colour)));
+    }
 }

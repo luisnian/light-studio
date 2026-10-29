@@ -276,6 +276,8 @@ pub struct SavedPlace {
     pub base: u64,
     pub dirty: bool,
     pub conflict: bool,
+    /// Came from the phone and has not been opened yet: marked with a ring on the map.
+    pub fresh: bool,
 }
 
 impl Default for SavedPlace {
@@ -300,6 +302,7 @@ impl Default for SavedPlace {
             base: 0,
             dirty: false,
             conflict: false,
+            fresh: false,
         }
     }
 }
@@ -585,6 +588,8 @@ pub struct Runtime {
     /// dates shown were looked for (and whether for the Moon).
     find_open: bool,
     find_zoom: f64,
+    /// The Find card's map takes the whole card.
+    find_map_big: bool,
     found_label: String,
     found_moon: bool,
     found_core: bool,
@@ -1130,6 +1135,10 @@ pub fn import_pois(app: &mut App, path: &str) -> Result<serde_json::Value, Strin
 pub fn merge_phone_points(app: &mut App, points: &[serde_json::Value]) -> serde_json::Value {
     let deleted = app.ui.planner.pdi_deleted.clone();
     let r = pois::merge_worker(&mut app.ui.planner.saved, points, MAX_SAVED, &deleted);
+    if r.added > 0 {
+        // the new ones show at once
+        app.ui.planner.map_mode = MapMode::Pois;
+    }
     json!({"added": r.added, "updated": r.updated, "removed": r.removed, "unchanged": r.unchanged, "rejected": r.rejected})
 }
 
@@ -1219,6 +1228,9 @@ pub fn apply_phone_push(app: &mut App, sent: &[Sent], results: &[crate::services
 
 /// Opens the record of the point of interest `i` in front of the map.
 pub fn open_site(app: &mut App, i: usize) {
+    if let Some(p) = app.ui.planner.saved.get_mut(i) {
+        p.fresh = false;
+    }
     app.planner.site_open = Some(i);
     app.planner.plan_popup = None;
 }
@@ -2224,6 +2236,19 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_find_map_takes_the_whole_card_and_gives_it_back() {
+        let mut app = new_app();
+        app.ui.planner.placed = true;
+        app.planner.find_open = true;
+        app.planner.find_map_big = true;
+        for size in [vec2(1400.0, 900.0), vec2(300.0, 300.0)] {
+            draw(&mut app, size);
+        }
+        app.planner.find_map_big = false;
+        draw(&mut app, vec2(1400.0, 900.0));
     }
 
     #[test]

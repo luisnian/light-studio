@@ -119,6 +119,7 @@ impl SavedPlace {
             base: 0,
             dirty: false,
             conflict: false,
+            fresh: false,
             notebook: Default::default(),
             ..p.clone()
         };
@@ -398,6 +399,8 @@ pub(super) fn merge_worker(saved: &mut Vec<SavedPlace>, records: &[serde_json::V
                 if take {
                     // the notebook is only here: a record from the Worker never carries it
                     point.notebook = std::mem::take(&mut old.notebook);
+                    // a point not yet opened stays marked
+                    point.fresh = old.fresh;
                     *old = point;
                     out.updated += 1;
                 } else {
@@ -405,6 +408,7 @@ pub(super) fn merge_worker(saved: &mut Vec<SavedPlace>, records: &[serde_json::V
                 }
             }
             None if saved.len() < max => {
+                point.fresh = true;
                 saved.push(point);
                 out.added += 1;
             }
@@ -576,5 +580,31 @@ mod tests {
         let text = "[{\"id\":\"1\",\"latitude\":1,\"longitude\":1},{\"id\":\"2\",\"latitude\":2,\"longitude\":2}]";
         let r = import_json(&mut local, text, 2).unwrap();
         assert_eq!((r.added, r.rejected), (1, 1));
+    }
+
+    #[test]
+    fn a_point_new_from_the_phone_is_marked_fresh_once_and_an_update_does_not_mark_it() {
+        let rec = |version: u64, name: &str| serde_json::json!({"id":"p1","name":name,"latitude":43.3,"longitude":-1.9,"version":version});
+        let mut saved = Vec::new();
+        let r = merge_worker(&mut saved, &[rec(1, "Faro")], 10, &[]);
+        assert_eq!((r.added, saved[0].fresh), (1, true));
+        // opened: the mark goes, and a repeat of the same record does not bring it back
+        saved[0].fresh = false;
+        merge_worker(&mut saved, &[rec(1, "Faro")], 10, &[]);
+        assert!(!saved[0].fresh);
+        // an update of a point not yet opened keeps the mark; one already opened stays unmarked
+        saved[0].fresh = true;
+        let r = merge_worker(&mut saved, &[rec(2, "Faro nuevo")], 10, &[]);
+        assert_eq!((r.updated, saved[0].fresh, saved[0].name.as_str()), (1, true, "Faro nuevo"));
+        saved[0].fresh = false;
+        merge_worker(&mut saved, &[rec(3, "Faro 3")], 10, &[]);
+        assert!(!saved[0].fresh);
+        // the mark alone is not a change of content
+        let mut b = saved[0].clone();
+        b.fresh = true;
+        assert!(saved[0].same_content(&b));
+        // settings from before the mark read as not fresh
+        let old: SavedPlace = serde_json::from_str(r#"{"name":"x","lat":1,"lon":2}"#).unwrap();
+        assert!(!old.fresh);
     }
 }

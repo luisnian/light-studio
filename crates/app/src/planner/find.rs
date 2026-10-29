@@ -136,6 +136,13 @@ impl Page<'_> {
             rt.find_open = false;
         }
         let body = Rect::from_min_max(pos2(r.left() + 1.0, r.top() + 52.0), r.max - vec2(1.0, 1.0));
+        if rt.find_map_big {
+            let area = Rect::from_min_max(body.min + vec2(20.0, 0.0), body.max - vec2(20.0, 16.0));
+            if area.width() > 120.0 && area.height() > 120.0 {
+                self.find_map(ui, st, rt, area);
+                return;
+            }
+        }
         let wide = body.width() >= 700.0;
         let (left, right) = if wide {
             let split = (body.width() - 500.0_f32.min(body.width() * 0.5)).max(body.width() * 0.5);
@@ -171,22 +178,11 @@ impl Page<'_> {
         }
     }
 
-    /// What to look for: the body, the direction on a mini-map, the elevation, the tolerance and the stretch of days.
-    fn find_search(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, column_h: f32) {
+    /// The mini-map, north up, round the place, with the direction as a wedge; the elevation gauge beside it. `area` is
+    /// all the room it has (the card's whole body when the map is enlarged).
+    fn find_map(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, area: Rect) {
         let t = self.t;
-        let items = [("Sun", "sun"), ("Moon", "moon"), ("Milky Way", "core")];
-        let chosen = if st.find_core { 2 } else { usize::from(!st.find_sun) };
-        if let Some(n) = crate::widgets::segmented(ui, "plannerFindBody", &items, Some(chosen), 3) {
-            (st.find_sun, st.find_core) = (n == 0, n == 2);
-        }
-        ui.add_space(6.0);
-        note(ui, crate::i18n::tr("Point the direction on the map and the height on the bar."));
-        ui.add_space(4.0);
-
-        // the mini-map, north up, round the place, with the direction as a wedge; the elevation gauge beside it
-        let w = ui.available_width();
         let gauge_w = 30.0;
-        let (area, _) = ui.allocate_exact_size(vec2(w, (column_h - 520.0).clamp(160.0, 1200.0)), Sense::hover());
         let map = Rect::from_min_max(area.min, pos2(area.right() - gauge_w - 8.0, area.bottom()));
         let gauge = Rect::from_min_max(pos2(area.right() - gauge_w, area.top()), area.max);
         if rt.find_zoom < MIN_ZOOM {
@@ -283,7 +279,39 @@ impl Page<'_> {
                 rt.find_zoom = (rt.find_zoom + dz).clamp(MIN_ZOOM, MAX_ZOOM);
             }
         }
+        // the button that takes the map over the whole card, and gives it back
+        let big = Rect::from_min_size(map.left_top() + vec2(8.0, 8.0), vec2(28.0, 28.0));
+        let tip = if rt.find_map_big { "Back to the normal size" } else { "Enlarge the map to the whole card" };
+        let rb = ui.interact(big, egui::Id::new("planner-find-map-big"), Sense::click()).on_hover_text(crate::i18n::tr(tip));
+        painter.rect_filled(big, 6.0, if rb.hovered() { t.hover } else { t.chrome });
+        crate::icons::paint(
+            &painter,
+            Rect::from_center_size(big.center(), vec2(16.0, 16.0)),
+            Icon::Fit,
+            if rt.find_map_big { t.accent } else { t.text },
+        );
+        if rb.clicked() {
+            rt.find_map_big = !rt.find_map_big;
+        }
         self.find_gauge(ui, st, gauge);
+    }
+
+    /// What to look for: the body, the direction on a mini-map, the elevation, the tolerance and the stretch of days.
+    fn find_search(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, column_h: f32) {
+        let t = self.t;
+        let items = [("Sun", "sun"), ("Moon", "moon"), ("Milky Way", "core")];
+        let chosen = if st.find_core { 2 } else { usize::from(!st.find_sun) };
+        if let Some(n) = crate::widgets::segmented(ui, "plannerFindBody", &items, Some(chosen), 3) {
+            (st.find_sun, st.find_core) = (n == 0, n == 2);
+        }
+        ui.add_space(6.0);
+        note(ui, crate::i18n::tr("Point the direction on the map and the height on the bar."));
+        ui.add_space(4.0);
+
+        // the mini-map, north up, round the place, with the direction as a wedge; the elevation gauge beside it
+        let w = ui.available_width();
+        let (area, _) = ui.allocate_exact_size(vec2(w, (column_h - 520.0).clamp(160.0, 1200.0)), Sense::hover());
+        self.find_map(ui, st, rt, area);
 
         ui.add_space(8.0);
         ui.horizontal(|ui| {
