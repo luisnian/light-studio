@@ -52,7 +52,13 @@ pub struct SunCoords {
     pub dist_km: f64,
 }
 
-pub fn sun_coords(jd: f64) -> SunCoords {
+/// The Sun at a Julian day in Universal Time (delta T is added here).
+pub fn sun_coords(jd_ut: f64) -> SunCoords {
+    sun_coords_tt(jd_ut + crate::time::delta_t_at_jd(jd_ut) / crate::time::DAY)
+}
+
+/// The Sun at a Julian day in Terrestrial Time.
+pub fn sun_coords_tt(jd: f64) -> SunCoords {
     let t = centuries(jd);
     let l0 = 280.466_46 + 36_000.769_83 * t + 0.000_303_2 * t * t;
     let m = (357.529_11 + 35_999.050_29 * t - 0.000_153_7 * t * t).to_radians();
@@ -102,7 +108,7 @@ mod tests {
     /// Meeus example 25.a: 1992 October 13, 0h TD.
     #[test]
     fn matches_meeus_example_25a() {
-        let s = sun_coords(2_448_908.5);
+        let s = sun_coords_tt(2_448_908.5);
         assert!((s.lon - 199.908_95).abs() < 0.01, "lon {}", s.lon);
         assert!((s.ra - 198.380_83).abs() < 0.02, "ra {}", s.ra);
         assert!((s.dec - -7.785_07).abs() < 0.01, "dec {}", s.dec);

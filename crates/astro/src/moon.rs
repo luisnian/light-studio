@@ -1,8 +1,8 @@
 //! Where the Moon is and how much of it is lit.
 //!
-//! The position is Meeus's lunar theory cut to its largest terms (30 for longitude and distance, 14
-//! for latitude): within about 0.05 degrees, which is a tenth of the Moon's width and a minute or
-//! two of rise and set. Phase comes from the Sun-Moon geometry.
+//! The position is Meeus's lunar theory with all its periodic terms (60 for longitude and distance, 60
+//! for latitude) and the time taken as Terrestrial Time (UT plus delta T): about 10 arcseconds, which
+//! is what an eclipse's duration needs. Phase comes from the Sun-Moon geometry.
 //!
 //! Sources: Jean Meeus, *Astronomical Algorithms* 2nd ed., ch. 47 (Moon position, table 47.A and
 //! 47.B coefficients) and ch. 48 (illuminated fraction); formulas, not code.
@@ -14,7 +14,7 @@ const EARTH_RADIUS_KM: f64 = 6_378.14;
 const MOON_RADIUS_KM: f64 = 1_737.4;
 
 /// (D, M, M', F, longitude sine coefficient in 1e-6 degrees, distance cosine coefficient in 1e-3 km).
-const LON_DIST: [(i8, i8, i8, i8, i32, i32); 30] = [
+const LON_DIST: [(i8, i8, i8, i8, i32, i32); 60] = [
     (0, 0, 1, 0, 6_288_774, -20_905_355),
     (2, 0, -1, 0, 1_274_027, -3_699_111),
     (2, 0, 0, 0, 658_314, -2_955_968),
@@ -45,10 +45,40 @@ const LON_DIST: [(i8, i8, i8, i8, i32, i32); 30] = [
     (0, 1, -2, 0, -2_689, -7_003),
     (2, 0, -1, 2, -2_602, 0),
     (2, -1, -2, 0, 2_390, 10_056),
+    (1, 0, 1, 0, -2_348, 6_322),
+    (2, -2, 0, 0, 2_236, -9_884),
+    (0, 1, 2, 0, -2_120, 5_751),
+    (0, 2, 0, 0, -2_069, 0),
+    (2, -2, -1, 0, 2_048, -4_950),
+    (2, 0, 1, -2, -1_773, 4_130),
+    (2, 0, 0, 2, -1_595, 0),
+    (4, -1, -1, 0, 1_215, -3_958),
+    (0, 0, 2, 2, -1_110, 0),
+    (3, 0, -1, 0, -892, 3_258),
+    (2, 1, 1, 0, -810, 2_616),
+    (4, -1, -2, 0, 759, -1_897),
+    (0, 2, -1, 0, -713, -2_117),
+    (2, 2, -1, 0, -700, 2_354),
+    (2, 1, -2, 0, 691, 0),
+    (2, -1, 0, -2, 596, 0),
+    (4, 0, 1, 0, 549, -1_423),
+    (0, 0, 4, 0, 537, -1_117),
+    (4, -1, 0, 0, 520, -1_571),
+    (1, 0, -2, 0, -487, -1_739),
+    (2, 1, 0, -2, -399, 0),
+    (0, 0, 2, -2, -381, -4_421),
+    (1, 1, 1, 0, 351, 0),
+    (3, 0, -2, 0, -340, 0),
+    (4, 0, -3, 0, 330, 0),
+    (2, -1, 2, 0, 327, 0),
+    (0, 2, 1, 0, -323, 1_165),
+    (1, 1, -1, 0, 299, 0),
+    (2, 0, 3, 0, 294, 0),
+    (2, 0, -1, -2, 0, 8_752),
 ];
 
 /// (D, M, M', F, latitude sine coefficient in 1e-6 degrees).
-const LAT: [(i8, i8, i8, i8, i32); 14] = [
+const LAT: [(i8, i8, i8, i8, i32); 60] = [
     (0, 0, 0, 1, 5_128_122),
     (0, 0, 1, 1, 280_602),
     (0, 0, 1, -1, 277_693),
@@ -63,6 +93,52 @@ const LAT: [(i8, i8, i8, i8, i32); 14] = [
     (2, 0, -2, -1, 4_324),
     (2, 0, 1, 1, 4_200),
     (2, 1, 0, -1, -3_359),
+    (2, -1, -1, 1, 2_463),
+    (2, -1, 0, 1, 2_211),
+    (2, -1, -1, -1, 2_065),
+    (0, 1, -1, -1, -1_870),
+    (4, 0, -1, -1, 1_828),
+    (0, 1, 0, 1, -1_794),
+    (0, 0, 0, 3, -1_749),
+    (0, 1, -1, 1, -1_565),
+    (1, 0, 0, 1, -1_491),
+    (0, 1, 1, 1, -1_475),
+    (0, 1, 1, -1, -1_410),
+    (0, 1, 0, -1, -1_344),
+    (1, 0, 0, -1, -1_335),
+    (0, 0, 3, 1, 1_107),
+    (4, 0, 0, -1, 1_021),
+    (4, 0, -1, 1, 833),
+    (0, 0, 1, -3, 777),
+    (4, 0, -2, 1, 671),
+    (2, 0, 0, -3, 607),
+    (2, 0, 2, -1, 596),
+    (2, -1, 1, -1, 491),
+    (2, 0, -2, 1, -451),
+    (0, 0, 3, -1, 439),
+    (2, 0, 2, 1, 422),
+    (2, 0, -3, -1, 421),
+    (2, 1, -1, 1, -366),
+    (2, 1, 0, 1, -351),
+    (4, 0, 0, 1, 331),
+    (2, -1, 1, 1, 315),
+    (2, -2, 0, -1, 302),
+    (0, 0, 1, 3, -283),
+    (2, 1, 1, -1, -229),
+    (1, 1, 0, -1, 223),
+    (1, 1, 0, 1, 223),
+    (0, 1, -2, -1, -220),
+    (2, 1, -1, -1, -220),
+    (1, 0, 1, 1, -185),
+    (2, -1, -2, -1, 181),
+    (0, 1, 2, 1, -177),
+    (4, 0, -2, -1, 176),
+    (4, -1, -1, -1, 166),
+    (1, 0, 1, -1, -164),
+    (4, 0, 1, -1, 132),
+    (1, 0, -1, -1, -119),
+    (4, -1, 0, -1, 115),
+    (2, -2, 0, 1, 107),
 ];
 
 /// The Moon at a moment: geocentric ecliptic longitude and latitude (degrees, longitude apparent),
@@ -76,7 +152,13 @@ pub struct MoonCoords {
     pub dec: f64,
 }
 
-pub fn moon_coords(jd: f64) -> MoonCoords {
+/// The Moon at a Julian day in Universal Time (delta T is added here).
+pub fn moon_coords(jd_ut: f64) -> MoonCoords {
+    moon_coords_tt(jd_ut + crate::time::delta_t_at_jd(jd_ut) / crate::time::DAY)
+}
+
+/// The Moon at a Julian day in Terrestrial Time.
+pub fn moon_coords_tt(jd: f64) -> MoonCoords {
     let t = centuries(jd);
     let t2 = t * t;
     let t3 = t2 * t;
@@ -292,6 +374,19 @@ pub fn principal_phases(from: f64, to: f64) -> Vec<(f64, Principal)> {
 mod tests {
     use super::*;
     use crate::time::unix_from_civil;
+
+    /// Meeus example 47.a: 1992 April 12, 0h TD (geometric longitude 133.162655, latitude -3.229126, distance 368409.7 km;
+    /// ours is the apparent longitude, 0.0046 degrees of nutation further on).
+    #[test]
+    fn matches_meeus_example_47a_with_every_term() {
+        let m = moon_coords_tt(2_448_724.5);
+        assert!((m.lon - 0.004_6 - 133.162_655).abs() < 0.000_8, "lon {}", m.lon);
+        assert!((m.lat - -3.229_126).abs() < 0.000_5, "lat {}", m.lat);
+        assert!((m.dist_km - 368_409.7).abs() < 1.0, "dist {}", m.dist_km);
+        // universal time is delta T behind terrestrial time, so the Moon is a little behind where it is at the same UT-as-TT
+        let ut = moon_coords(2_448_724.5 - crate::time::delta_t_at_jd(2_448_724.5) / crate::time::DAY);
+        assert!((ut.lon - m.lon).abs() < 0.000_2);
+    }
 
     #[test]
     fn lists_the_phases_of_a_month_in_order() {

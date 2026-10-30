@@ -11,6 +11,51 @@ pub fn jd_from_unix(unix: f64) -> f64 {
     unix / DAY + 2_440_587.5
 }
 
+/// Terrestrial Time minus Universal Time, seconds, for a Julian day in UT. Measured values to 2024, then held flat (the
+/// Earth's rotation cannot be predicted further than a second or two a year), joined to the long-term parabola by 2050;
+/// before 2005 the polynomial of Espenak and Meeus. Good to about a second near now, which is half an arcsecond of Moon.
+pub fn delta_t_at_jd(jd_ut: f64) -> f64 {
+    let y = 2000.0 + (jd_ut - 2_451_544.5) / 365.2425;
+    if !y.is_finite() {
+        return 69.0;
+    }
+    let parabola = |y: f64| {
+        let u = (y - 1820.0) / 100.0;
+        -20.0 + 32.0 * u * u
+    };
+    if y >= 2050.0 {
+        (parabola(y) - 0.5628 * (2150.0 - y.min(2150.0))).max(0.0)
+    } else if y >= 2035.0 {
+        let k = (y - 2035.0) / 15.0;
+        69.3 + (parabola(2050.0) - 0.5628 * 100.0 - 69.3) * k
+    } else if y >= 2024.0 {
+        69.3
+    } else if y >= 2005.0 {
+        // measured: 2005 64.7 s, 2010 66.1, 2015 67.6, 2020 69.4, 2024 69.2
+        let table = [(2005.0, 64.69), (2010.0, 66.07), (2015.0, 67.64), (2020.0, 69.36), (2024.0, 69.3)];
+        let mut out = 69.3;
+        for w in table.windows(2) {
+            if let [(y0, d0), (y1, d1)] = w
+                && y >= *y0
+                && y <= *y1
+            {
+                out = d0 + (d1 - d0) * (y - y0) / (y1 - y0);
+            }
+        }
+        out
+    } else if y >= 1986.0 {
+        let t = y - 2000.0;
+        63.86 + 0.3345 * t - 0.060374 * t * t + 0.0017275 * t.powi(3) + 0.000_651_814 * t.powi(4) + 0.000_023_735_99 * t.powi(5)
+    } else {
+        parabola(y).max(0.0)
+    }
+}
+
+/// Delta T for a Unix time (seconds, UTC).
+pub fn delta_t(unix: f64) -> f64 {
+    delta_t_at_jd(jd_from_unix(unix))
+}
+
 /// A calendar date (proleptic Gregorian).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Date {
@@ -271,6 +316,24 @@ pub fn auto_utc_offset_min(lat: f64, lon: f64, unix: f64) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn delta_t_is_about_a_minute_now_and_never_jumps() {
+        let at = |y: i32, m: u32| delta_t(unix_from_civil(y, m, 1, 0, 0, 0));
+        assert!((at(2000, 1) - 63.8).abs() < 0.5, "2000: {}", at(2000, 1));
+        assert!((at(2010, 1) - 66.1).abs() < 0.5);
+        assert!((at(2027, 8) - 69.3).abs() < 1.5);
+        // continuous across every join, from 1990 to 2100
+        let mut prev = at(1990, 1);
+        for y in 1990..2100 {
+            for m in [1, 7] {
+                let now = at(y, m);
+                assert!((now - prev).abs() < 4.0, "{y}-{m}: {prev} -> {now}");
+                prev = now;
+            }
+        }
+        assert!(delta_t(f64::NAN) > 0.0 && delta_t(1.0e15).is_finite() && delta_t(-1.0e15).is_finite());
+    }
+
     use super::*;
 
     #[test]

@@ -8,7 +8,7 @@
 //!
 //! Sources: Jean Meeus, *Astronomical Algorithms* ch. 54 (the shadow radii), Danjon's factor.
 
-use crate::moon::{Principal, moon_coords, moon_horizontal, principal_phases, semidiameter};
+use crate::moon::{Principal, moon_coords, principal_phases, semidiameter};
 use crate::sun::{KM_PER_AU, Observer, sun_coords, sun_horizontal};
 use crate::time::jd_from_unix;
 
@@ -171,10 +171,22 @@ pub struct SolarEclipse {
     pub annular: bool,
 }
 
-fn horizontal_separation(a: crate::sun::Horizontal, b: crate::sun::Horizontal) -> f64 {
-    let (a1, a2) = (a.alt.to_radians(), b.alt.to_radians());
-    let c = a1.sin() * a2.sin() + a1.cos() * a2.cos() * (a.az - b.az).to_radians().cos();
-    c.clamp(-1.0, 1.0).acos().to_degrees()
+/// The observer's position in the equatorial frame of date (km from the Earth's centre), on the oblate Earth.
+fn observer_vector(jd: f64, obs: Observer) -> [f64; 3] {
+    let phi = obs.lat.to_radians();
+    let u = (0.996_647_19 * phi.tan()).atan();
+    let rho_sin = 0.996_647_19 * u.sin();
+    let rho_cos = u.cos();
+    let theta = (crate::sun::gmst(jd) + obs.lon).to_radians();
+    [EQUATORIAL_KM * rho_cos * theta.cos(), EQUATORIAL_KM * rho_cos * theta.sin(), EQUATORIAL_KM * rho_sin]
+}
+
+/// Right ascension and declination (degrees) and distance (km) of a body as seen from the observer's point.
+fn topocentric(ra: f64, dec: f64, dist: f64, o: [f64; 3]) -> (f64, f64, f64) {
+    let v = vector(ra, dec, dist);
+    let r = [v[0] - o[0], v[1] - o[1], v[2] - o[2]];
+    let d = dot(r, r).sqrt().max(1.0);
+    (r[1].atan2(r[0]).to_degrees().rem_euclid(360.0), (r[2] / d).clamp(-1.0, 1.0).asin().to_degrees(), d)
 }
 
 /// The fraction of a disc of radius `rs` covered by one of radius `rm` whose centre is `d` away.
@@ -193,11 +205,23 @@ pub fn overlap_fraction(rs: f64, rm: f64, d: f64) -> f64 {
 
 /// What an observer sees of the solar eclipse around a new moon, if there is one at all.
 pub fn solar_eclipse_at(new_moon: f64, obs: Observer) -> Option<SolarEclipse> {
-    let radii = |t: f64| {
+    // everything is worked out as seen from the observer's point on the oblate Earth (parallax of both bodies and the
+    // Moon's disc growing as it climbs), not from the Earth's centre
+    let state = |t: f64| {
         let jd = jd_from_unix(t);
-        (0.266_56 / (sun_coords(jd).dist_km / KM_PER_AU).max(0.1), semidiameter(moon_coords(jd).dist_km))
+        let o = observer_vector(jd, obs);
+        let (s, m) = (sun_coords(jd), moon_coords(jd));
+        let (sra, sdec, sdist) = topocentric(s.ra, s.dec, s.dist_km, o);
+        let (mra, mdec, mdist) = topocentric(m.ra, m.dec, m.dist_km, o);
+        let rs = (SUN_DISC_KM / sdist.max(1.0)).clamp(-1.0, 1.0).asin().to_degrees();
+        let rm = (MOON_KM / mdist.max(1.0)).clamp(-1.0, 1.0).asin().to_degrees();
+        (separation(sra, sdec, mra, mdec), rs, rm)
     };
-    let sep = |t: f64| horizontal_separation(sun_horizontal(t, obs), moon_horizontal(t, obs));
+    let radii = |t: f64| {
+        let (_, rs, rm) = state(t);
+        (rs, rm)
+    };
+    let sep = |t: f64| state(t).0;
     let n = (2.0 * 3.0 * 3600.0 / STEP) as usize;
     let start = new_moon - 3.0 * 3600.0;
     let times: Vec<f64> = (0..=n).map(|i| start + i as f64 * STEP).collect();
@@ -229,9 +253,9 @@ pub fn solar_eclipse_at(new_moon: f64, obs: Observer) -> Option<SolarEclipse> {
     };
     let inner = |t: f64| {
         let (rs, rm) = radii(t);
-        (rm - rs).abs()
+        (rm * UMBRAL_SHRINK - rs).abs()
     };
-    let central = d <= (rm - rs).abs();
+    let central = d <= (rm * UMBRAL_SHRINK - rs).abs();
     let sun = sun_horizontal(greatest, obs);
     Some(SolarEclipse {
         new_moon,
@@ -285,8 +309,14 @@ pub struct EclipsePath {
 }
 
 const EARTH_KM: f64 = 6_371.0;
+const EQUATORIAL_KM: f64 = 6_378.14;
 const MOON_KM: f64 = 1_737.4;
 const SUN_KM: f64 = 695_700.0;
+/// The Sun's radius for its disc as eclipse predictions take it (959.63 arcseconds at one AU).
+const SUN_DISC_KM: f64 = 696_000.0;
+/// Eclipse predictions shrink the Moon a little for totality and annularity, so the valleys of its limb let some light
+/// through (Espenak's umbral k = 0.272281 against 0.272488).
+const UMBRAL_SHRINK: f64 = 0.272_281 / 0.272_488;
 
 fn vector(ra: f64, dec: f64, dist: f64) -> [f64; 3] {
     let (ra, dec) = (ra.to_radians(), dec.to_radians());

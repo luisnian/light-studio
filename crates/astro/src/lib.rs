@@ -22,7 +22,7 @@ pub mod sun;
 pub mod time;
 
 pub use align::{Alignment, Body, Profile, Sight, alignments, destination, profile, shadow, sight};
-pub use moon::{Phase, PhaseName, Principal, moon_coords, moon_horizontal, moon_phase, next_phase, principal_phases};
+pub use moon::{Phase, PhaseName, Principal, moon_coords, moon_coords_tt, moon_horizontal, moon_phase, next_phase, principal_phases};
 pub use plan::{
     CoreDay, DayPlan, MoonDay, NightProfile, NightScore, Skies, Span, SunDay, SunState, Twilight, dark_core_windows, night_profile, plan_day,
     score_night, score_nights, skies_at,
