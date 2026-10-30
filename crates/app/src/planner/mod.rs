@@ -637,6 +637,14 @@ pub struct Runtime {
     align: Option<((u64, u64, u64, u64, i64), Vec<light_studio_astro::Alignment>)>,
 }
 
+impl Runtime {
+    /// The shadows are worked out again (the ground they come from changed).
+    pub fn forget_shadows(&mut self) {
+        self.shade_heights = None;
+        self.shade_picture = None;
+    }
+}
+
 /// What the eclipse list was worked out for: latitude and longitude bits, and the day it starts.
 type EclipseKey = (u64, u64, i64);
 

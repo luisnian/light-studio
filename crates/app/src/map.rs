@@ -125,7 +125,8 @@ impl Runtime {
         if satellite && self.tiles.as_ref().is_none_or(|t| t.source() != map_tiles::Source::Offline) {
             return crate::services::map_tiles::SATELLITE_ATTRIBUTION.to_string();
         }
-        self.tiles.as_ref().map(|t| t.attribution()).unwrap_or_default()
+        let tiles = self.tiles.as_ref().map(|t| t.attribution()).unwrap_or_default();
+        if crate::services::fine_terrain::in_use() { format!("{tiles} · {}", crate::services::fine_terrain::ATTRIBUTION) } else { tiles }
     }
 
     /// Forgets the service and its tiles (the source changed).

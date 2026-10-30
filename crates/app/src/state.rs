@@ -39,6 +39,8 @@ pub struct UiState {
     pub map_carto_key: String,
     /// A PMTiles map file on this computer, used instead of the network (empty: none).
     pub map_offline: String,
+    /// A folder of 1-metre LiDAR height files (.asc) for fine shadows (empty: none).
+    pub fine_terrain: String,
     pub settings: Settings,
 }
 
@@ -49,6 +51,7 @@ impl Default for UiState {
             map_satellite: true,
             map_carto_key: String::new(),
             map_offline: String::new(),
+            fine_terrain: String::new(),
             settings: Settings::default(),
         }
     }

@@ -726,5 +726,10 @@
  "Choose…": "Elegir…",
  "Offline map in use:": "Mapa sin conexión en uso:",
  "The offline map cannot be used:": "No se puede usar el mapa sin conexión:",
- "A PMTiles file with PNG, JPEG or WebP tiles for your region makes the map work with no network. Vector files are not drawn.": "Un archivo PMTiles con teselas PNG, JPEG o WebP de tu región permite usar el mapa sin red. Los archivos vectoriales no se dibujan."
+ "A PMTiles file with PNG, JPEG or WebP tiles for your region makes the map work with no network. Vector files are not drawn.": "Un archivo PMTiles con teselas PNG, JPEG o WebP de tu región permite usar el mapa sin red. Los archivos vectoriales no se dibujan.",
+ "Fine terrain": "Relieve fino",
+ "Folder with 1 m .asc height files": "Carpeta con ficheros .asc de alturas de 1 m",
+ "{n} height files found. Shadows use them within 3 km of a place they fully cover.": "{n} ficheros de alturas encontrados. Las sombras los usan a menos de 3 km de un lugar que cubran por completo.",
+ "The fine terrain cannot be used:": "No se puede usar el relieve fino:",
+ "Prototype for Gipuzkoa: unzip the 1 km LiDAR height boxes (.asc, ETRS89 UTM 30N, orthometric heights) from b5m.gipuzkoa.eus/lidar into one folder.": "Prototipo para Gipuzkoa: descomprime las cajas LiDAR de 1 km (.asc, ETRS89 UTM 30N, alturas ortométricas) de b5m.gipuzkoa.eus/lidar en una carpeta."
 }

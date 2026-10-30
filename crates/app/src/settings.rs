@@ -100,6 +100,35 @@ fn general(app: &mut App, ui: &mut Ui, t: &Tokens) {
             tr("A PMTiles file with PNG, JPEG or WebP tiles for your region makes the map work with no network. Vector files are not drawn."),
         ),
     }
+    row(ui, t, "Fine terrain", |ui| {
+        let r =
+            TextField::singleline("field:fineTerrain", &mut app.ui.fine_terrain).hint(tr("Folder with 1 m .asc height files")).width(260.0).show(ui);
+        let mut changed = r.committed();
+        if ui.button(tr("Choose…")).clicked()
+            && let Some(path) = rfd::FileDialog::new().pick_folder()
+        {
+            app.ui.fine_terrain = path.display().to_string();
+            changed = true;
+        }
+        if changed {
+            crate::services::fine_terrain::set_folder(&app.ui.fine_terrain);
+            // the shadows are worked out again from the new ground
+            app.planner.forget_shadows();
+        }
+    });
+    match crate::services::fine_terrain::status() {
+        Some(Ok(n)) => {
+            hint(ui, t, &tr("{n} height files found. Shadows use them within 3 km of a place they fully cover.").replace("{n}", &n.to_string()))
+        }
+        Some(Err(e)) => hint(ui, t, &format!("{} {e}", tr("The fine terrain cannot be used:"))),
+        None => hint(
+            ui,
+            t,
+            tr(
+                "Prototype for Gipuzkoa: unzip the 1 km LiDAR height boxes (.asc, ETRS89 UTM 30N, orthometric heights) from b5m.gipuzkoa.eus/lidar into one folder.",
+            ),
+        ),
+    }
     hint(ui, t, tr("Map credits: satellite © Esri, Maxar, Earthstar Geographics; plain map © OpenStreetMap contributors, © CARTO."));
     hint(ui, t, tr("Without a key the plain map comes from OpenStreetMap. A free key is given at carto.com/basemaps/apikey."));
 }

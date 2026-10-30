@@ -60,6 +60,10 @@ pub fn heights_of(rgba: &[u8], width: usize, height: usize) -> Option<Vec<f32>> 
 /// The ground within `radius_m` of the place (a little more: whole tiles); needs the network unless the tiles were
 /// fetched before.
 pub fn fetch(lat: f64, lon: f64, radius_m: f64) -> Result<Dem, String> {
+    // 1-metre LiDAR from a local folder, where it covers the place, beats the global tiles
+    if let Some(fine) = super::fine_terrain::dem(lat, lon)? {
+        return Ok(fine);
+    }
     let template = std::env::var("LIGHT_STUDIO_TERRAIN_URL").ok().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| SERVICE.to_string());
     let cache = crate::paths::config_dir().map(|d| d.join("terrain-tiles"));
     fetch_with(&template, cache.as_deref(), lat, lon, radius_m, ZOOM)
