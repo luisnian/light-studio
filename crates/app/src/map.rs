@@ -183,7 +183,16 @@ struct Layer {
     rank: f32,
 }
 
-fn paint_layer(rt: &mut Runtime, painter: &egui::Painter, rect: Rect, cam: Cam, now: f64, layer: &Layer, want: &mut Vec<(f32, TileKey)>) {
+fn paint_layer(
+    rt: &mut Runtime,
+    painter: &egui::Painter,
+    rect: Rect,
+    cam: Cam,
+    now: f64,
+    layer: &Layer,
+    want: &mut Vec<(f32, TileKey)>,
+    seen: &mut Vec<crate::theme::BackdropTile>,
+) {
     let n = f64::from(1u32 << layer.zoom);
     let edge = (cam.s / n) as f32;
     let (x0, y0) = cam.world(rect.min);
@@ -198,7 +207,9 @@ fn paint_layer(rt: &mut Runtime, painter: &egui::Painter, rect: Rect, cam: Cam, 
             let r = Rect::from_min_size(min, vec2(edge, edge)).expand(0.25);
             if let Some((tex, used)) = rt.textures.get_mut(&key) {
                 *used = frame;
-                painter.image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), layer.tint);
+                let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+                painter.image(tex.id(), r, uv, layer.tint);
+                seen.push(crate::theme::BackdropTile { texture: tex.id(), rect: r, uv, tint: layer.tint });
                 continue;
             }
             let (mut k, mut ox, mut oy, mut size) = (key, 0.0f32, 0.0f32, 1.0f32);
@@ -207,7 +218,9 @@ fn paint_layer(rt: &mut Runtime, painter: &egui::Painter, rect: Rect, cam: Cam, 
                 (k, ox, oy, size) = (parent, (qx as f32 + ox) / 2.0, (qy as f32 + oy) / 2.0, size / 2.0);
                 if let Some((tex, used)) = rt.textures.get_mut(&k) {
                     *used = frame;
-                    painter.image(tex.id(), r, Rect::from_min_size(pos2(ox, oy), vec2(size, size)), layer.tint);
+                    let uv = Rect::from_min_size(pos2(ox, oy), vec2(size, size));
+                    painter.image(tex.id(), r, uv, layer.tint);
+                    seen.push(crate::theme::BackdropTile { texture: tex.id(), rect: r, uv, tint: layer.tint });
                     break;
                 }
             }
@@ -246,18 +259,20 @@ pub(crate) fn draw_tiles(
     // (the plain map is always the light one)
     let base: &[MapStyle] = if satellite { &[MapStyle::Satellite, MapStyle::Labels] } else { &[MapStyle::Light] };
     let mut want: Vec<(f32, TileKey)> = Vec::new();
+    let mut seen = Vec::new();
     for (i, &style) in base.iter().enumerate() {
         // the names come after the picture under them
         let layer = Layer { style, zoom: z, lookup: 6, tint: crate::theme::map_tint(), rank: i as f32 * 1e9 };
-        paint_layer(rt, painter, rect, cam, now, &layer, &mut want);
+        paint_layer(rt, painter, rect, cam, now, &layer, &mut want, &mut seen);
     }
     // the light pollution atlas has its own numbering: 1024-pixel tiles, level 0 the whole world
     if light {
         let lz = (level - 2.0).clamp(0.0, f64::from(map_tiles::LIGHT_POLLUTION_MAX_Z)) as u8;
         let layer =
             Layer { style: MapStyle::LightPollution, zoom: lz, lookup: 4, tint: crate::theme::map_tint().gamma_multiply(LIGHT_OPACITY), rank: 2e9 };
-        paint_layer(rt, painter, rect, cam, now, &layer, &mut want);
+        paint_layer(rt, painter, rect, cam, now, &layer, &mut want, &mut seen);
     }
+    crate::theme::set_backdrop(seen);
     // farthest first: the service takes the last ones first
     want.sort_by(|a, b| b.0.total_cmp(&a.0));
     let keys: Vec<TileKey> = want.into_iter().map(|(_, k)| k).collect();

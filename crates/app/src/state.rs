@@ -25,6 +25,8 @@ pub struct Settings {
     pub language: String,
     /// The red-light look, to keep night vision in the field.
     pub red_light: bool,
+    /// No blurred map under the cards (a plain translucent glass).
+    pub plain_glass: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

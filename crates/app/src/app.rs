@@ -48,6 +48,7 @@ impl App {
         let language = crate::i18n::Language::parse(&ui.settings.language).unwrap_or_else(crate::i18n::Language::from_system);
         crate::i18n::set_language(language);
         crate::theme::set_red_light(ui.settings.red_light);
+        crate::theme::set_frosted(!ui.settings.plain_glass);
         App {
             ctx,
             ui,

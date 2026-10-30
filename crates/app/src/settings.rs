@@ -70,6 +70,11 @@ fn general(app: &mut App, ui: &mut Ui, t: &Tokens) {
         crate::theme::set_red_light(app.ui.settings.red_light);
         crate::theme::apply(ui.ctx());
     }
+    let mut frosted = !app.ui.settings.plain_glass;
+    if ui.checkbox(&mut frosted, tr("Frosted glass (blurs the map under the cards)")).changed() {
+        app.ui.settings.plain_glass = !frosted;
+        crate::theme::set_frosted(frosted);
+    }
     row(ui, t, "CARTO key", |ui| {
         TextField::singleline("field:cartoKey", &mut app.ui.map_carto_key).hint(tr("Optional: a key for CARTO's plain map")).width(260.0).show(ui);
     });

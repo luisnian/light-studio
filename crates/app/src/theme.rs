@@ -2,6 +2,7 @@
 //! in use, and the few painting helpers every floating panel shares.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use egui::{Color32, Context, CornerRadius, FontFamily, FontId, Painter, Rect, Stroke, StrokeKind};
 
@@ -28,6 +29,55 @@ pub fn red_light() -> bool {
 /// The colour map tiles are multiplied by: white, or a deep red in the red-light look.
 pub fn map_tint() -> Color32 {
     if red_light() { Color32::from_rgb(255, 40, 30) } else { Color32::WHITE }
+}
+
+/// One map tile as it was painted this frame, kept so the cards can paint a blurred copy of the map under their glass.
+#[derive(Clone, Copy, Debug)]
+pub struct BackdropTile {
+    pub texture: egui::TextureId,
+    pub rect: Rect,
+    pub uv: Rect,
+    pub tint: Color32,
+}
+
+static BACKDROP: Mutex<Vec<BackdropTile>> = Mutex::new(Vec::new());
+static NO_BLUR: AtomicBool = AtomicBool::new(false);
+
+/// Turns the frosted glass (the blurred map under the cards) on or off.
+pub fn set_frosted(on: bool) {
+    NO_BLUR.store(!on, Ordering::Relaxed);
+}
+
+/// Keeps the tiles the map painted, in painting order, for the cards to blur.
+pub fn set_backdrop(tiles: Vec<BackdropTile>) {
+    *BACKDROP.lock().unwrap_or_else(PoisonError::into_inner) = tiles;
+}
+
+/// How far, in points, the taps of the blur reach.
+const BLUR_RADIUS: f32 = 7.0;
+/// Taps on the ring (and one in the middle).
+const BLUR_TAPS: usize = 8;
+
+/// Paints the map's tiles under `r` blurred: the tiles again, shifted round a ring, each tap weighted so the sum is their
+/// plain average. No pixel is read back: it is only a few more textured quads.
+fn paint_blurred_backdrop(p: &Painter, r: Rect, k: f32) {
+    if NO_BLUR.load(Ordering::Relaxed) || k < 0.05 {
+        return;
+    }
+    let tiles = BACKDROP.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    let p = p.with_clip_rect(r.intersect(p.clip_rect()));
+    let mut offsets = vec![egui::Vec2::ZERO];
+    for i in 0..BLUR_TAPS {
+        let a = std::f32::consts::TAU * i as f32 / BLUR_TAPS as f32;
+        offsets.push(egui::vec2(a.cos(), a.sin()) * BLUR_RADIUS);
+    }
+    for (n, off) in offsets.iter().enumerate() {
+        // the n-th tap at 1/(n+1) of the opacity makes the running average of all of them
+        let weight = k / (n as f32 + 1.0);
+        for t in tiles.iter().filter(|t| t.rect.translate(*off).intersects(r)) {
+            p.image(t.texture, t.rect.translate(*off), t.uv, t.tint.gamma_multiply(weight));
+        }
+    }
 }
 
 /// The family text of a heavier weight is set in (see [`install_fonts`]).
@@ -279,6 +329,7 @@ fn paint_glass(p: &Painter, r: Rect, t: &Tokens, alpha: u8, k: f32) {
         Color32::from_black_alpha(18).gamma_multiply(k),
     );
     p.rect_filled(r.translate(egui::vec2(0.0, 2.0)), radius, Color32::from_black_alpha(50).gamma_multiply(k));
+    paint_blurred_backdrop(p, r, k);
     p.rect_filled(r, radius, glass(t, alpha).gamma_multiply(k));
     let hairline = if t.dark { Color32::from_white_alpha(30) } else { Color32::from_black_alpha(24) };
     p.rect_stroke(r, radius, Stroke::new(1.0, hairline.gamma_multiply(k)), StrokeKind::Inside);
@@ -312,6 +363,35 @@ mod tests {
         }
         assert!(t.text.r() - t.chrome.r() > 150);
         assert!(t.text_dim.r() - t.chrome.r() > 100);
+    }
+
+    #[test]
+    fn a_card_over_the_map_paints_the_blur_taps_and_plain_glass_does_not() {
+        let tile = BackdropTile {
+            texture: egui::TextureId::Managed(1),
+            rect: Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(256.0, 256.0)),
+            uv: Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            tint: Color32::WHITE,
+        };
+        let count = |frosted: bool| {
+            set_frosted(frosted);
+            set_backdrop(vec![tile]);
+            let ctx = Context::default();
+            let mut images = 0;
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                paint_card(ui.painter(), Rect::from_min_size(egui::pos2(20.0, 20.0), egui::vec2(100.0, 80.0)), &Tokens::dark(), 1.0);
+            });
+            out.textures_delta.clear();
+            for s in &out.shapes {
+                if matches!(s.shape, egui::Shape::Mesh(_)) {
+                    images += 1;
+                }
+            }
+            images
+        };
+        let (with, without) = (count(true), count(false));
+        set_frosted(true);
+        assert_eq!(with - without, 1 + BLUR_TAPS, "{with} {without}");
     }
 
     #[test]
