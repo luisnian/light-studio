@@ -120,8 +120,6 @@ pub struct PlannerState {
     pub date: String,
     /// Minutes east of UTC; `None` guesses it from the place and day.
     pub utc_offset: Option<i32>,
-    /// The real offset the time zone service gave for the place (see zone.rs).
-    pub zone: Option<zone::ZoneFix>,
     /// The time shown, minutes after local midnight; `None` is now (today) or sunset.
     pub minute: Option<f64>,
     /// Which of the Sun, Moon and Milky Way core are drawn.
@@ -316,7 +314,6 @@ impl Default for PlannerState {
             place: String::new(),
             date: String::new(),
             utc_offset: None,
-            zone: None,
             minute: None,
             layers: [true; 3],
             sensor: optics::CANON_6D,
@@ -409,7 +406,6 @@ impl PlannerState {
         if self.utc_offset.is_some_and(|o| !(-720..=840).contains(&o)) {
             self.utc_offset = None;
         }
-        self.zone = self.zone.take().and_then(zone::ZoneFix::tidy);
         if self.minute.is_some_and(|m| !m.is_finite()) {
             self.minute = None;
         }
@@ -543,8 +539,6 @@ pub struct Runtime {
     phone: phone::Cache,
     /// The directions the Sun or Moon reaches over the days the Find card looks through, and what they were worked out for
     /// (the body, the place, the first day, the number of days).
-    /// The place the time zone was last asked for (latitude and longitude bits), so a failed try is not repeated every frame.
-    zone_asked: Option<(u64, u64)>,
     /// The next date of each saved search, by what it was worked out for, and whether a check is running.
     saved_next: Option<(u64, Vec<Option<f64>>)>,
     saved_next_pending: bool,
@@ -802,10 +796,10 @@ fn noon_of(date: Date, lon: f64) -> f64 {
 
 /// The day and UTC offset in force: the typed ones, else today and the place's zone (the real answer where it applies, else a guess).
 fn resolve(st: &PlannerState, now: f64) -> (Date, i32) {
-    let guess_now = st.utc_offset.unwrap_or_else(|| zone::offset_at(st.lat, st.lon, now, st.zone.as_ref()).0);
+    let guess_now = st.utc_offset.unwrap_or_else(|| zone::offset_at(st.lat, st.lon, now).0);
     let today = Date::from_unix(now, guess_now);
     let date = Date::parse(&st.date).unwrap_or(today);
-    let offset = st.utc_offset.unwrap_or_else(|| zone::offset_at(st.lat, st.lon, noon_of(date, st.lon), st.zone.as_ref()).0);
+    let offset = st.utc_offset.unwrap_or_else(|| zone::offset_at(st.lat, st.lon, noon_of(date, st.lon)).0);
     (date, offset)
 }
 
@@ -954,7 +948,6 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     run_search(app, ui.ctx());
 
     let c = refresh(&app.ui.planner, &mut app.planner, now);
-    zone::ask(app, ui.ctx());
     saved::refresh(app);
     find::ask_clouds(app);
     let obs = observer(&app.ui.planner);
@@ -962,11 +955,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let at = c.start + minute * 60.0;
     let skies = skies_at(obs, at);
     // the nights of the year, for the year chart (the offset follows the place unless it was set by hand)
-    let zone_key = app.ui.planner.zone.as_ref().filter(|z| z.is_for(app.ui.planner.lat, app.ui.planner.lon)).map(|z| z.offset_min);
-    let year_key: YearKey =
-        (app.ui.planner.lat.to_bits(), app.ui.planner.lon.to_bits(), c.date.year, app.ui.planner.utc_offset.or(zone_key.map(|o| o + 100_000)));
+    let year_key: YearKey = (app.ui.planner.lat.to_bits(), app.ui.planner.lon.to_bits(), c.date.year, app.ui.planner.utc_offset);
     if app.planner.year.as_ref().is_none_or(|(k, _)| *k != year_key) {
-        let profiles = year::profiles(obs, c.date.year, app.ui.planner.utc_offset, app.ui.planner.zone.as_ref());
+        let profiles = year::profiles(obs, c.date.year, app.ui.planner.utc_offset);
         app.planner.year = Some((year_key, Arc::new(profiles)));
     }
     let year_nights = app.planner.year.as_ref().map(|(_, v)| v.clone()).unwrap_or_default();

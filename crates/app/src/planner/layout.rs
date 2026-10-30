@@ -497,7 +497,7 @@ impl Page<'_> {
         if icon_button(ui, "plannerOffsetLess", Icon::Minus, size, false, true, "Earlier Time Zone").clicked() {
             st.utc_offset = Some((self.c.offset - 30).max(-720));
         }
-        let source = super::zone::offset_at(st.lat, st.lon, super::noon_of(self.c.date, st.lon), st.zone.as_ref()).1;
+        let source = super::zone::offset_at(st.lat, st.lon, super::noon_of(self.c.date, st.lon)).1;
         let note = match (auto, source) {
             (false, _) => String::new(),
             (true, super::zone::Source::Real) => format!(" ({})", crate::i18n::tr("auto, from the place's time zone")),

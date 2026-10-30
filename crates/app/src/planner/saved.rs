@@ -147,7 +147,7 @@ impl Spec {
         if !(now.is_finite() && lat.is_finite() && lon.is_finite() && lat.abs() <= 90.0 && lon.abs() <= 180.0) {
             return Vec::new();
         }
-        let off = super::zone::offset_at(lat, lon, now, None).0;
+        let off = super::zone::offset_at(lat, lon, now).0;
         let start = Date::from_unix(now, off).unix_midnight_utc() - f64::from(off) * 60.0;
         let mut hits = find_with(
             self.target(),
@@ -253,7 +253,7 @@ impl Page<'_> {
                         None => (crate::i18n::tr("checking…").to_string(), false),
                         Some(None) => (format!("{} {CHECK_DAYS} {}", crate::i18n::tr("none in the next"), crate::i18n::tr("days")), false),
                         Some(Some(u)) => {
-                            let off = super::zone::offset_at(s.lat, s.lon, u, None).0;
+                            let off = super::zone::offset_at(s.lat, s.lon, u).0;
                             (format!("{} {}", short_date(Date::from_unix(u, off)), clock(u, off)), u - now <= SOON_DAYS * DAY)
                         }
                     };
