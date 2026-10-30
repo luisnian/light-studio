@@ -1,21 +1,20 @@
 //! The page's layout, after the photographer's planning maps (and Luis's own «Mapa solar»): the map fills the
-//! view; over it float the place search (top left), the map's buttons (top right), the side panel with its tabs
-//! (Sun, Moon, Night, Line Up, Calendar, Sites, Calculations) and, along the bottom, the time bar: the day, the
+//! view; over it float the place search (top left), the map's buttons (top right), the cards (Information, Sky,
+//! Line Up, Find, Calculations) that open from the middle of the screen and, along the bottom, the time bar: the day, the
 //! time and a strip with the Sun's and the Moon's height over the day to drag the time along.
 
 use super::*;
 
 /// Space around the floating panels.
 const M: f32 = 10.0;
-/// The side panel's width at most, and the time bar's height.
-const SIDE_W: f32 = 400.0;
-/// The width of the map's icon rail, which stays right of the side panel.
+/// The width of the map's icon rail.
 pub(super) const RAIL_W: f32 = 36.0;
 const TIME_H: f32 = 124.0;
 /// The time bar's width unless widened (PhotoPills-like: a compact bar centred under the map).
 const TIME_W: f32 = 640.0;
 
-/// The side panel's tabs.
+/// The parts of the planner (the Sky card shows Sun, Moon, Night and Milky Way; the rest are the cards of the same name).
+/// (A saved layout may still name one; the cards replaced the tabs.)
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Tab {
@@ -31,33 +30,16 @@ pub enum Tab {
     Tools,
 }
 
-/// Every tab by id (agents and the control channel); the strip shows the Sky group once, led by the Sun/Moon/Night menu.
-pub(super) const TABS: [(Tab, &str, &str); 8] = [
-    (Tab::Info, "info", "Information"),
-    (Tab::Sun, "sun", "Sky"),
-    (Tab::Moon, "moon", "Moon"),
-    (Tab::Night, "night", "Night"),
-    (Tab::Align, "align", "Line Up"),
-    (Tab::Calendar, "calendar", "Milky Way"),
-    (Tab::Find, "find", "Find"),
-    (Tab::Tools, "tools", "Calculations"),
-];
-
-/// Where everything goes in `full`: the side panel, the time bar, and the map's free part.
+/// Where everything goes in `full`: the time bar and the map's free part (the cards and the rail float over the map).
 pub(super) struct Areas {
-    /// The right edge of the map's icon rail: always the far right, with the side panel opening to its left.
+    /// The right edge of the map's icon rail: always the far right.
     pub rail_right: f32,
-    pub side: Option<Rect>,
     pub time: Rect,
     pub free: Rect,
 }
 
-pub(super) fn areas(full: Rect, panel_hidden: bool, time_wide: bool, with_time: bool) -> Areas {
-    let side_w = SIDE_W.min((full.width() * 0.5).max(240.0)).min((full.width() - 3.0 * M - RAIL_W).max(0.0));
-    let side = (!panel_hidden && side_w > 0.0).then(|| {
-        Rect::from_min_max(pos2(full.right() - 2.0 * M - RAIL_W - side_w, full.top() + M), pos2(full.right() - 2.0 * M - RAIL_W, full.bottom() - M))
-    });
-    let right = side.map_or(full.right() - M, |s| s.left() - M).max(full.left() + M + 160.0);
+pub(super) fn areas(full: Rect, time_wide: bool, with_time: bool) -> Areas {
+    let right = (full.right() - M).max(full.left() + M + 160.0);
     let time_h = if with_time { TIME_H.min((full.height() * 0.4).max(0.0)) } else { 0.0 };
     let (left, room) = (full.left() + M, right - full.left() - M);
     let w = if time_wide { room } else { room.min(TIME_W) };
@@ -65,15 +47,45 @@ pub(super) fn areas(full: Rect, panel_hidden: bool, time_wide: bool, with_time: 
     let time = Rect::from_min_max(pos2(x0, full.bottom() - M - time_h), pos2(x0 + w, full.bottom() - M));
     let free_bottom = if with_time { (time.top() - M).max(full.top() + M + 40.0) } else { full.bottom() - M };
     let free = Rect::from_min_max(full.min + vec2(M, M), pos2(right, free_bottom));
-    Areas { rail_right: full.right() - M, side, time, free }
+    Areas { rail_right: full.right() - M, time, free }
 }
 
-/// The date card and the time card, stacked under the place search (same width).
-pub(crate) fn cards_rects(free: Rect) -> [Rect; 2] {
-    let w = (free.width() - 60.0).clamp(120.0, 300.0) + 8.0;
-    let date = Rect::from_min_size(pos2(free.left(), free.top() + 42.0), vec2(w, 36.0));
-    let time = Rect::from_min_size(pos2(free.left(), date.bottom() + 6.0), vec2(w, 68.0));
-    [date, time]
+/// Where the three icons (search, date, time) sit, top left, and the cards each one opens to its right.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct IslandRects {
+    pub chip: Rect,
+    /// The search, date and time cards at full size.
+    pub cards: [Rect; 3],
+}
+
+/// Height of one icon of the island, and its width.
+const ISLAND_ICON: egui::Vec2 = egui::vec2(32.0, 34.0);
+
+/// The island's rectangles for `n` icons (1: only the search; 3: search, date, time).
+pub(crate) fn island_rects(free: Rect, n: usize) -> IslandRects {
+    let chip = Rect::from_min_size(free.min, vec2(RAIL_W, n as f32 * ISLAND_ICON.y + 6.0));
+    let w = (free.width() - RAIL_W - 80.0).clamp(120.0, 300.0) + 8.0;
+    let x = chip.right() + 6.0;
+    let at = |i: usize, h: f32| Rect::from_min_size(pos2(x, chip.top() + 3.0 + ISLAND_ICON.y * i as f32), vec2(w, h));
+    IslandRects { chip, cards: [at(0, 36.0), at(1, 36.0), at(2, 68.0)] }
+}
+
+/// The time bar at rest: a thin strip, centred where the full bar goes.
+pub(super) fn compact_time_rect(normal: Rect) -> Rect {
+    let w = (normal.width() * 0.5).clamp(120.0, 320.0).min(normal.width());
+    Rect::from_center_size(pos2(normal.center().x, normal.bottom() - 13.0), vec2(w, 26.0))
+}
+
+/// The time bar across the whole width, from the left edge to the compass.
+pub(super) fn wide_time_rect(free: Rect, normal: Rect) -> Rect {
+    let left = free.left();
+    // the compass (radius 28, 14 from the corner) and a gap
+    let right = (free.right() - 2.0 * 28.0 - 14.0 - 12.0).max(left + 120.0);
+    Rect::from_min_max(pos2(left, normal.top()), pos2(right, normal.bottom()))
+}
+
+pub(super) fn lerp_rect(a: Rect, b: Rect, t: f32) -> Rect {
+    Rect::from_min_max(a.min + (b.min - a.min) * t, a.max + (b.max - a.max) * t)
 }
 
 /// A floating panel's surface.
@@ -98,7 +110,12 @@ pub(super) fn card_opacity(ctx: &egui::Context, id: &str, r: Rect, keep: bool) -
 
 /// The surface of a big card (Find, Sky, calculations…): the same glass, more opaque.
 pub(super) fn surface_big(p: &egui::Painter, r: Rect, t: &Tokens) {
-    crate::theme::paint_card_big(p, r, t);
+    crate::theme::paint_card_big(p, r, t, 1.0);
+}
+
+/// The same at `k` of its opacity (the card opening or closing).
+pub(super) fn surface_big_at(p: &egui::Painter, r: Rect, t: &Tokens, k: f32) {
+    crate::theme::paint_card_big(p, r, t, k);
 }
 
 /// A floating panel's surface at the given opacity (0..1; 1 = as every card).
@@ -112,43 +129,92 @@ impl Page<'_> {
         rt.search.trim().is_empty()
     }
 
-    pub(super) fn floating_search(&mut self, ui: &mut Ui, rt: &mut Runtime, free: Rect) {
+    /// The place search, the day and the time: three icons over the map's top left (a magnifier, a calendar, a clock) that
+    /// grow under the pointer; the one pointed at (or clicked, which keeps it open) opens its card sideways, like a
+    /// Dynamic Island. Outside the Planner only the search is there.
+    pub(super) fn island(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, free: Rect, planner: bool) {
         let t = self.t;
-        let w = (free.width() - 60.0).clamp(120.0, 300.0);
-        let r = Rect::from_min_size(free.min, vec2(w + 8.0, 36.0));
-        let busy = crate::text_field::was_editing(ui.ctx(), "planner:search") || !self.search_is_empty(rt);
-        let k = card_opacity(ui.ctx(), "search", r, busy);
-        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("planner-search-opacity"), k));
-        surface_with(ui.painter(), r, &t, k);
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r.shrink(4.0)));
-        self.search_field(&mut child, rt, w);
-        self.search_results(ui, rt);
-    }
-
-    /// The two cards under the place search: the day, and the time with its zone (row 1: previous event, time, next
-    /// event, Now, from the left; row 2: the UTC offset).
-    pub(super) fn date_time_cards(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, free: Rect) {
-        let t = self.t;
-        let [date, time] = cards_rects(free);
-        for (r, id) in [(date, "date"), (time, "time")] {
-            let busy = crate::text_field::was_editing(ui.ctx(), "planner:date") && id == "date"
-                || crate::text_field::was_editing(ui.ctx(), "planner:time") && id == "time";
-            let k = card_opacity(ui.ctx(), id, r, busy);
-            surface_with(ui.painter(), r, &t, k);
-            let _ = ui.interact(r, egui::Id::new(("planner-card-bg", r.top() as i32)), Sense::click_and_drag());
+        let ctx = ui.ctx().clone();
+        let n = if planner { 3 } else { 1 };
+        let ir = island_rects(free, n);
+        let k = card_opacity(&ctx, "island", ir.chip, false);
+        ui.painter().rect_filled(ir.chip.translate(vec2(0.0, 1.5)), 9.0, Color32::from_black_alpha(50).gamma_multiply(k));
+        crate::theme::paint_chip_at(ui.painter(), ir.chip, &t, k);
+        let _ = ui.interact(ir.chip, egui::Id::new("planner-island-bg"), Sense::click_and_drag());
+        let mut icons = ui.new_child(egui::UiBuilder::new().max_rect(ir.chip.shrink2(vec2(2.0, 3.0))).layout(egui::Layout::top_down(Align::Center)));
+        icons.spacing_mut().item_spacing.y = 0.0;
+        let kinds = [
+            (Icon::Search, "plannerIslandSearch", "Search for a place"),
+            (Icon::Calendar, "plannerIslandDate", "Date"),
+            (Icon::Clock, "plannerIslandTime", "Time"),
+        ];
+        let mut over = [false; 3];
+        let mut icon_rect = [Rect::NOTHING; 3];
+        for (i, (icon, id, tip)) in kinds.iter().take(n).enumerate() {
+            let resp = crate::widgets::icon_button_grow(&mut icons, id, *icon, ISLAND_ICON, rt.island_pin == Some(i), true, tip);
+            over[i] = resp.hovered();
+            icon_rect[i] = resp.rect;
+            if resp.clicked() {
+                rt.island_pin = if rt.island_pin == Some(i) { None } else { Some(i) };
+            }
         }
-        let mut row = ui.new_child(egui::UiBuilder::new().max_rect(date.shrink2(vec2(8.0, 4.0))).layout(egui::Layout::left_to_right(Align::Center)));
-        row.spacing_mut().item_spacing.x = 6.0;
-        self.day_controls(&mut row, st, rt);
-        let inner = time.shrink2(vec2(8.0, 4.0));
-        let top = Rect::from_min_size(inner.min, vec2(inner.width(), 28.0));
-        let bottom = Rect::from_min_size(pos2(inner.left(), top.bottom() + 2.0), vec2(inner.width(), 28.0));
-        let mut right = ui.new_child(egui::UiBuilder::new().max_rect(top).layout(egui::Layout::left_to_right(Align::Center)));
-        right.spacing_mut().item_spacing.x = 6.0;
-        self.time_controls(&mut right, st, rt);
-        let mut off = ui.new_child(egui::UiBuilder::new().max_rect(bottom).layout(egui::Layout::left_to_right(Align::Center)));
-        off.spacing_mut().item_spacing.x = 6.0;
-        self.offset_controls(&mut off, st);
+        let pointer = ctx.pointer_hover_pos();
+        let popup = egui::Popup::is_any_open(&ctx);
+        for i in 0..n {
+            let full = ir.cards[i];
+            let was = ctx.animate_bool_with_time(egui::Id::new(("planner-island", i)), rt.island_open[i], 0.0);
+            let busy = match i {
+                0 => crate::text_field::was_editing(&ctx, "planner:search") || !self.search_is_empty(rt),
+                1 => crate::text_field::was_editing(&ctx, "planner:date") || popup,
+                _ => crate::text_field::was_editing(&ctx, "planner:time"),
+            };
+            // the pointer may cross from the icon to its card without closing it
+            let hull = icon_rect[i].union(full).expand(2.0);
+            let near = was > 0.02 && pointer.is_some_and(|p| hull.contains(p));
+            let open = over[i] || rt.island_pin == Some(i) || busy || near;
+            rt.island_open[i] = open;
+            let a = ctx.animate_bool_with_time(egui::Id::new(("planner-island", i)), open, 0.16);
+            if a <= 0.01 {
+                continue;
+            }
+            let eased = a * a * (3.0 - 2.0 * a);
+            let cur = Rect::from_min_size(full.min, vec2(full.width() * eased, full.height()));
+            let id = ["search", "date", "time"][i];
+            let kc = card_opacity(&ctx, id, cur, busy);
+            if i == 0 {
+                ctx.data_mut(|d| d.insert_temp(egui::Id::new("planner-search-opacity"), kc));
+            }
+            surface_with(ui.painter(), cur, &t, kc);
+            let _ = ui.interact(cur, egui::Id::new(("planner-card-bg", i)), Sense::click_and_drag());
+            let mut child =
+                ui.new_child(egui::UiBuilder::new().max_rect(full.shrink2(vec2(8.0, 4.0))).layout(egui::Layout::left_to_right(Align::Center)));
+            child.set_clip_rect(cur.intersect(ui.clip_rect()));
+            child.spacing_mut().item_spacing.x = 6.0;
+            match i {
+                0 => {
+                    let mut f = ui.new_child(egui::UiBuilder::new().max_rect(full.shrink(4.0)));
+                    f.set_clip_rect(cur.intersect(ui.clip_rect()));
+                    self.search_field(&mut f, rt, full.width() - 8.0);
+                    if eased > 0.98 {
+                        self.search_results(ui, rt);
+                    }
+                }
+                1 => self.day_controls(&mut child, st, rt),
+                _ => {
+                    let inner = full.shrink2(vec2(8.0, 4.0));
+                    let top = Rect::from_min_size(inner.min, vec2(inner.width(), 28.0));
+                    let bottom = Rect::from_min_size(pos2(inner.left(), top.bottom() + 2.0), vec2(inner.width(), 28.0));
+                    let mut row = ui.new_child(egui::UiBuilder::new().max_rect(top).layout(egui::Layout::left_to_right(Align::Center)));
+                    row.set_clip_rect(cur.intersect(ui.clip_rect()));
+                    row.spacing_mut().item_spacing.x = 6.0;
+                    self.time_controls(&mut row, st, rt);
+                    let mut off = ui.new_child(egui::UiBuilder::new().max_rect(bottom).layout(egui::Layout::left_to_right(Align::Center)));
+                    off.set_clip_rect(cur.intersect(ui.clip_rect()));
+                    off.spacing_mut().item_spacing.x = 6.0;
+                    self.offset_controls(&mut off, st);
+                }
+            }
+        }
     }
 
     /// Left to right (under the date): previous event, the time (typed), next event, Now.
@@ -181,32 +247,8 @@ impl Page<'_> {
         }
     }
 
-    // ---- the side panel -----------------------------------------------------------------------
-
-    pub(super) fn side_panel(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, r: Rect) {
-        let t = self.t;
-        surface(ui.painter(), r, &t);
-        // swallow clicks on the panel's empty parts (the map is under it)
-        let _ = ui.interact(r, egui::Id::new("planner-side-bg"), Sense::click_and_drag());
-        let inner = r.shrink2(vec2(16.0, 14.0));
-        let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(Align::Min)));
-        ui.set_clip_rect(r.shrink(1.0));
-        self.side_head(&mut ui, st, rt);
-        ui.add_space(8.0);
-        self.tabs(&mut ui, rt);
-        let pane = Rect::from_min_max(pos2(r.left() + 1.0, ui.cursor().top()), r.max - vec2(1.0, 1.0));
-        let mut pane_ui = ui.new_child(egui::UiBuilder::new().max_rect(pane).layout(egui::Layout::top_down(Align::Min)));
-        let tab = st.tab;
-        egui::ScrollArea::vertical().id_salt(("planner-pane", tab as u8)).auto_shrink([false, false]).show(&mut pane_ui, |ui| {
-            egui::Frame::NONE.inner_margin(Margin { left: 15, right: 15, top: 12, bottom: 24 }).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                self.pane(ui, st, rt, tab);
-            });
-        });
-    }
-
     /// The place, its coordinates and where else it can come from.
-    fn side_head(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime) {
+    pub(super) fn side_head(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime) {
         let t = self.t;
         let w = ui.available_width();
         let name = ui.painter().layout(self.place.clone(), t.semibold(16.0), t.text, w - 4.0);
@@ -264,72 +306,13 @@ impl Page<'_> {
             {
                 self.intents.push(Intent::SavePoi);
             }
+            if text_button(ui, "plannerSettings", "Settings", false).on_hover_text(crate::i18n::tr("Open the settings")).clicked() {
+                self.intents.push(Intent::OpenSettings);
+            }
         });
     }
 
-    /// The tab strip: names with a line under the one shown.
-    fn tabs(&mut self, ui: &mut Ui, rt: &mut Runtime) {
-        let t = self.t;
-        let w = ui.available_width();
-        let (row, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
-        let shown: Vec<&(Tab, &str, &str)> = TABS.iter().filter(|(tab, _, _)| !matches!(tab, Tab::Moon | Tab::Night | Tab::Calendar)).collect();
-        let (sky_open, align_open, calc_open, find_open) = (rt.sky_open, rt.align_open, rt.calc_open, rt.find_open);
-        let none_open = !(sky_open || align_open || calc_open || find_open);
-        let is_on = move |tab: Tab| match tab {
-            Tab::Sun => sky_open,
-            Tab::Align => align_open,
-            Tab::Tools => calc_open,
-            Tab::Find => find_open,
-            _ => none_open,
-        };
-        // icons only (the name shows on hover): the strip stays quiet now that a menu picks the map mode
-        let cell_w = w / shown.len().max(1) as f32;
-        let mut active_x = None;
-        let mut x = row.left();
-        for (tab, id, label) in shown.iter().map(|t| **t) {
-            let cell = Rect::from_min_size(pos2(x, row.top()), vec2(cell_w, row.height()));
-            x = cell.right();
-            let resp = ui.interact(cell, egui::Id::new(("planner-tab", id)), Sense::click()).on_hover_text(crate::i18n::tr(label));
-            let on = is_on(tab);
-            let color = if on {
-                t.text
-            } else if resp.hovered() {
-                t.text_label
-            } else {
-                t.text_dim
-            };
-            let icon = match tab {
-                Tab::Info => Icon::Info,
-                Tab::Sun => Icon::Sun,
-                Tab::Align => Icon::Linear,
-                Tab::Find => Icon::Search,
-                _ => Icon::Sliders,
-            };
-            crate::icons::paint(ui.painter(), Rect::from_center_size(pos2(cell.center().x, cell.center().y - 1.0), vec2(18.0, 18.0)), icon, color);
-            if on {
-                active_x = Some(cell.center().x);
-            }
-            if resp.clicked() {
-                // Sky, Line Up, Find and the calculations each open in a card of their own, centred over the map
-                match tab {
-                    Tab::Sun => super::bigcard::toggle(rt, super::bigcard::Card::Sky),
-                    Tab::Align => super::bigcard::toggle(rt, super::bigcard::Card::Align),
-                    Tab::Tools => super::bigcard::toggle(rt, super::bigcard::Card::Calc),
-                    Tab::Find => super::bigcard::toggle(rt, super::bigcard::Card::Find),
-                    _ => super::bigcard::toggle_off(rt),
-                }
-            }
-        }
-        // the underline slides to the tab shown
-        if let Some(ax) = active_x {
-            let x = ui.ctx().animate_value_with_time(egui::Id::new("planner-tab-underline"), ax, 0.16);
-            let u = Rect::from_min_max(pos2(x - 12.0, row.bottom() - 2.5), pos2(x + 12.0, row.bottom()));
-            ui.painter().rect_filled(u, 1.0, t.accent);
-        }
-        ui.painter().line_segment([pos2(row.left() - 16.0, row.bottom()), pos2(row.right() + 16.0, row.bottom())], Stroke::new(1.0, t.divider));
-    }
-
-    fn pane(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, tab: Tab) {
+    pub(super) fn pane(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, tab: Tab) {
         match tab {
             // (the Sky and Line Up cards have their own place over the map now; a saved layout that still names one of
             // their tabs shows Information)
@@ -408,36 +391,30 @@ impl Page<'_> {
 
     pub(super) fn time_bar(&mut self, ui: &mut Ui, st: &mut PlannerState, r: Rect) {
         let t = self.t;
-        let k = card_opacity(ui.ctx(), "timebar", r, false);
+        let open: f32 = ui.ctx().data(|d| d.get_temp(egui::Id::new("planner-time-open-k"))).unwrap_or(1.0);
+        let k = card_opacity(ui.ctx(), "timebar", r, open > 0.05);
+        ui.painter().rect_filled(r.translate(vec2(0.0, 1.5)), 12.0, Color32::from_black_alpha(50).gamma_multiply(k));
         surface_with(ui.painter(), r, &t, k);
-        let _ = ui.interact(r, egui::Id::new("planner-time-bg"), Sense::click_and_drag());
-        let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(r.shrink2(vec2(14.0, 8.0))).layout(egui::Layout::top_down(Align::Min)));
-        ui.set_clip_rect(r.shrink(1.0));
-        // the controls float over the map (see `date_time_cards`): the bar is the chart, as tall as it can be
-        let h = (ui.available_height() - 18.0).max(20.0);
-        self.chart(&mut ui, st, h, true);
-        // widen / narrow the bar
-        let b = Rect::from_min_size(pos2(r.right() - 30.0, r.top() + 4.0), vec2(24.0, 24.0));
-        let mut btn = ui.new_child(egui::UiBuilder::new().max_rect(b).layout(egui::Layout::top_down(Align::Min)));
-        let tip = if st.time_wide { "Narrow the time bar" } else { "Widen the time bar" };
-        if icon_button(&mut btn, "plannerTimeWide", Icon::Fit, vec2(24.0, 24.0), st.time_wide, true, tip).clicked() {
+        let bg = ui.interact(r, egui::Id::new("planner-time-bg"), Sense::click_and_drag());
+        // a double click anywhere on the bar: the whole width (and back)
+        if bg.double_clicked() || (ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) && bg.hovered()) {
             st.time_wide = !st.time_wide;
         }
-        // fold the bar away until the pointer comes to the bottom edge
-        let b2 = b.translate(vec2(-28.0, 0.0));
-        let mut btn2 = ui.new_child(egui::UiBuilder::new().max_rect(b2).layout(egui::Layout::top_down(Align::Min)));
-        if icon_button(
-            &mut btn2,
-            "plannerTimeAuto",
-            Icon::ChevronDown,
-            vec2(24.0, 24.0),
-            st.time_auto,
-            true,
-            "Hide the time bar until the pointer comes to the bottom edge",
-        )
-        .clicked()
-        {
-            st.time_auto = !st.time_auto;
+        let pad = vec2(2.0 + 12.0 * open, 2.0 + 6.0 * open);
+        let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(r.shrink2(pad)).layout(egui::Layout::top_down(Align::Min)));
+        ui.set_clip_rect(r.shrink(1.0));
+        // the controls float over the map (see `island`): the bar is the chart, as tall as it can be
+        let bare = open < 0.45;
+        let h = (ui.available_height() - 18.0).max(if bare { 6.0 } else { 20.0 });
+        self.chart(&mut ui, st, h, true);
+        // widen / narrow the bar (once it has grown)
+        if open > 0.9 {
+            let b = Rect::from_min_size(pos2(r.right() - 30.0, r.top() + 4.0), vec2(24.0, 24.0));
+            let mut btn = ui.new_child(egui::UiBuilder::new().max_rect(b).layout(egui::Layout::top_down(Align::Min)));
+            let tip = if st.time_wide { "Narrow the time bar" } else { "Widen the time bar (or double-click it)" };
+            if icon_button(&mut btn, "plannerTimeWide", Icon::Fit, vec2(24.0, 24.0), st.time_wide, true, tip).clicked() {
+                st.time_wide = !st.time_wide;
+            }
         }
     }
 
@@ -546,20 +523,30 @@ mod tests {
     fn the_areas_fit_any_window() {
         for (w, h) in [(280.0, 500.0), (700.0, 900.0), (1600.0, 1000.0), (0.0, 0.0)] {
             let full = Rect::from_min_size(pos2(5.0, 7.0), vec2(w, h));
-            for hidden in [false, true] {
-                let a = areas(full, hidden, false, true);
-                assert!(a.free.width() >= 0.0 && a.free.height() >= 0.0 && a.time.height() >= 0.0, "{w}×{h}");
-                if let Some(s) = a.side {
-                    assert!(s.width() <= SIDE_W && s.right() <= full.right());
-                }
-                assert_eq!(a.side.is_none(), hidden || w <= 2.0 * M);
+            let a = areas(full, false, true);
+            assert!(a.free.width() >= 0.0 && a.free.height() >= 0.0 && a.time.height() >= 0.0, "{w}×{h}");
+        }
+        let a = areas(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 1000.0)), false, true);
+        assert!(a.free.bottom() < a.time.top() && a.free.right() <= a.rail_right);
+    }
+
+    #[test]
+    fn the_island_and_the_time_bar_fit_in_any_free_part() {
+        for (w, h) in [(0.0, 0.0), (120.0, 90.0), (300.0, 500.0), (1600.0, 1000.0)] {
+            let free = Rect::from_min_size(pos2(10.0, 10.0), vec2(w, h));
+            for n in [1, 3] {
+                let isl = island_rects(free, n);
+                assert!(isl.chip.min == free.min && isl.chip.height() > 0.0);
+                assert!(isl.cards.iter().all(|c| c.left() >= isl.chip.right() && c.width() >= 120.0));
             }
         }
-        let a = areas(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 1000.0)), false, false, true);
-        let side = a.side.unwrap();
-        assert!(a.free.right() < side.left() && a.time.right() < side.left() && a.free.bottom() < a.time.top());
-        // the icon rail stays at the far right whether or not the panel is open: the panel opens to its left
-        assert!(side.right() + M <= a.rail_right - RAIL_W);
-        assert_eq!(a.rail_right, areas(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 1000.0)), true, false, true).rail_right);
+        let normal = Rect::from_min_size(pos2(100.0, 800.0), vec2(640.0, 124.0));
+        let free = Rect::from_min_size(pos2(10.0, 10.0), vec2(1500.0, 900.0));
+        let (compact, wide) = (compact_time_rect(normal), wide_time_rect(free, normal));
+        // at rest the bar is a thin strip inside its full place; widened it stops short of the compass in the corner
+        assert!(normal.contains_rect(compact) && compact.height() < normal.height() / 3.0);
+        assert!(wide.left() == free.left() && wide.right() < free.right() - 56.0 && wide.contains_rect(normal));
+        assert_eq!(lerp_rect(compact, wide, 0.0), compact);
+        assert_eq!(lerp_rect(compact, wide, 1.0), wide);
     }
 }

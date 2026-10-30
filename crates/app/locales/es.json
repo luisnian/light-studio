@@ -705,6 +705,8 @@
  "Sheet opened: print it or save it as PDF from the browser": "Hoja abierta: imprímela o guárdala como PDF desde el navegador",
  "Sheet saved: {path}": "Hoja guardada: {path}",
  "Remove the Target": "Quitar el objetivo",
+ "Close the Information": "Cerrar la información",
+ "Open the settings": "Abrir los ajustes",
  "Enlarge the map to the whole card": "Ampliar el mapa a toda la tarjeta",
  "Back to the normal size": "Volver al tamaño normal"
 }

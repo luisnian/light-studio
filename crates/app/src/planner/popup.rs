@@ -205,14 +205,9 @@ impl Page<'_> {
             return;
         }
         let t = self.t;
-        let r = calc_rect(free);
-        if r.width() < 200.0 || r.height() < 160.0 {
-            return;
-        }
-        super::layout::surface_big(ui.painter(), r, &t);
+        let Some(r) = super::bigcard::open_rect(ui, &t, free) else { return };
         let _ = ui.interact(r, egui::Id::new("planner-calc-bg"), Sense::click_and_drag());
-        let painter = ui.painter().with_clip_rect(r);
-        painter.text(pos2(r.left() + 20.0, r.top() + 28.0), Align2::LEFT_CENTER, crate::i18n::tr("Calculations"), t.semibold(16.0), t.text);
+        self.card_tabs(ui, rt, r, super::bigcard::Card::Calc);
         let close = Rect::from_min_size(pos2(r.right() - 16.0 - 28.0, r.top() + 14.0), vec2(28.0, 28.0));
         let mut head = ui.new_child(egui::UiBuilder::new().max_rect(close));
         if icon_button(&mut head, "plannerCalcClose", Icon::Close, vec2(28.0, 28.0), false, true, "Close").clicked() {

@@ -198,9 +198,6 @@ pub struct PlannerState {
     pub long_lines: bool,
     /// The meteor shower (an index into the showers) whose radiant the map shows.
     pub meteor: Option<usize>,
-    /// The strip of information panels over the map: shown, its page, and the shower it follows.
-    pub strip: bool,
-    pub strip_page: usize,
     /// Which section of the information panel is open (none: any number past the last).
     pub info_open: usize,
     pub shower: usize,
@@ -369,8 +366,6 @@ impl Default for PlannerState {
             show_size: false,
             long_lines: false,
             meteor: None,
-            strip: true,
-            strip_page: 0,
             info_open: 1,
             shower: 4,
             find_sun: true,
@@ -473,7 +468,6 @@ impl PlannerState {
             self.to_sensor = d.to_sensor;
         }
         self.shower = self.shower.min(SHOWERS.len() - 1);
-        self.strip_page = self.strip_page.min(strip::PAGES - 1);
         if self.info_open >= infopanel::SECTIONS.len() {
             self.info_open = usize::MAX;
         }
@@ -598,8 +592,11 @@ pub struct Runtime {
     found_desc: bool,
     found_order: Vec<usize>,
     found_sorted_by: Option<(u8, bool, usize)>,
-    /// A card (calculations or Find) was open last frame: it is what closed the side panel, which stays closed after it.
-    calc_seen: bool,
+    /// Which of the island's cards (search, date, time) are open (this frame), and the one kept open by a click.
+    island_open: [bool; 3],
+    island_pin: Option<usize>,
+    /// Whether the Information card (the place, its coordinates and the facts of the day) is open over the map.
+    info_card: bool,
     /// The section of the calculations card shown.
     calc_section: usize,
     /// Where the map's context menu was opened (latitude, longitude).
@@ -1024,26 +1021,43 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let mode = st.map_mode;
     let planner = mode == MapMode::Planner;
     // a card (the calculations, Find) takes the room: the side panel steps aside when it opens and stays away after
-    let card = rt.calc_open || rt.find_open || rt.sky_open || rt.align_open;
-    if card && !rt.calc_seen {
-        st.panel_hidden = true;
-    }
-    rt.calc_seen = card;
-    let mut areas = layout::areas(full, st.panel_hidden, st.time_wide, planner && !card);
+    let card = rt.calc_open || rt.find_open || rt.sky_open || rt.align_open || rt.info_card;
+    // (the side panel is gone: every part of it is a card over the map now)
+    let mut areas = layout::areas(full, false, planner && !card);
     // an auto-hiding time bar floats over the map, which then keeps the room: the bar shows while the pointer is near
     // its place (or a drag is going on) and folds into a handle otherwise
     // the Mountains view has no time bar: the skyline takes its room (the time is still set with the cards)
     let mountains = planner && st.show_horizon;
     // (a card takes the whole room: no time bar under it)
-    let time_shown = if mountains || card {
+    let time_shown = if mountains && !card {
+        // the day as a slider under the skyline (the terrain takes a while to arrive: the Sun and the Moon already move)
+        areas.free.max.y = (full.bottom() - 54.0).max(areas.free.min.y);
+        false
+    } else if card {
         areas.free.max.y = (full.bottom() - 10.0).max(areas.free.min.y);
         false
-    } else if planner && st.time_auto {
+    } else if planner {
+        // the time bar floats over the map: ultra-compact at rest, its normal size under the pointer, the whole width
+        // (from the left edge to the compass) after a double click; the map keeps the room
         areas.free.max.y = (full.bottom() - 12.0).max(areas.free.min.y);
-        let zone = areas.time.expand2(vec2(0.0, 6.0));
-        let over = ui.ctx().pointer_hover_pos().is_some_and(|q| zone.contains(q))
-            || ui.ctx().input(|i| i.pointer.any_down() && i.pointer.press_origin().is_some_and(|q| zone.contains(q)));
-        ui.ctx().animate_bool_with_time(egui::Id::new("planner-time-auto"), over, 0.15) > 0.0
+        let normal = areas.time;
+        let wide = layout::wide_time_rect(areas.free, normal);
+        let compact = layout::compact_time_rect(normal);
+        let ctx = ui.ctx().clone();
+        let id = egui::Id::new("planner-time-grow");
+        let prev: Rect = ctx.data(|d| d.get_temp(id)).unwrap_or(compact);
+        let zone = prev.expand2(vec2(6.0, 8.0)).union(compact.expand2(vec2(8.0, 8.0)));
+        let over = ctx.pointer_hover_pos().is_some_and(|q| zone.contains(q))
+            || ctx.input(|i| i.pointer.any_down() && i.pointer.press_origin().is_some_and(|q| zone.contains(q)));
+        let a = ctx.animate_bool_with_time(egui::Id::new("planner-time-open"), over, 0.2);
+        let w = ctx.animate_bool_with_time(egui::Id::new("planner-time-wide"), st.time_wide, 0.2);
+        let ease = |x: f32| x * x * (3.0 - 2.0 * x);
+        let target = layout::lerp_rect(normal, wide, ease(w));
+        areas.time = layout::lerp_rect(compact, target, ease(a));
+        ctx.data_mut(|d| d.insert_temp(id, areas.time));
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new("planner-chart-bare"), a < 0.45));
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new("planner-time-open-k"), a));
+        true
     } else {
         true
     };
@@ -1053,51 +1067,47 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         if time_shown {
             blocked.push(areas.time);
         }
-        blocked.extend(layout::cards_rects(areas.free));
+        let isl = layout::island_rects(areas.free, 3);
+        blocked.push(isl.chip);
+        blocked.extend(isl.cards.iter().zip(rt.island_open).filter(|(_, o)| *o).map(|(r, _)| *r));
     }
-    blocked.extend(areas.side);
     // (the cards in front keep the scroll and the drags to themselves)
     if rt.find_open {
         blocked.push(areas.free.shrink(8.0));
     }
-    if rt.calc_open || rt.sky_open || rt.align_open {
+    if rt.calc_open || rt.sky_open || rt.align_open || rt.info_card {
         blocked.push(areas.free.shrink(8.0));
     }
     if st.show_horizon && planner {
         // the Mountains take the map's place: the skyline fills the free part (the search box stays over it)
         ui.painter().rect_filled(full, 0.0, page.t.backdrop);
         page.horizon_strip(ui, st, rt, horizon::view_rect(areas.free));
+        if !card {
+            let v = horizon::view_rect(areas.free);
+            let slider = Rect::from_min_max(pos2(v.left(), areas.free.bottom() + 4.0), pos2(v.right(), full.bottom() - 10.0));
+            page.time_slider(ui, st, slider);
+        }
     } else {
         page.map_view(ui, st, rt, full, areas.free, &blocked);
     }
-    if planner {
-        page.date_time_cards(ui, st, rt, areas.free);
-    }
-    page.floating_search(ui, rt, areas.free);
+    page.island(ui, st, rt, areas.free, planner);
     if planner && time_shown {
         page.time_bar(ui, st, areas.time);
         if !st.show_horizon {
             page.compass(ui, areas.free);
         }
-    } else if planner && !mountains && !card {
-        // the handle that stands for the folded time bar
-        let h = Rect::from_center_size(pos2(areas.time.center().x, full.bottom() - 7.0), vec2(72.0, 5.0));
-        ui.painter().rect_filled(h, 2.5, page.t.text_dim.gamma_multiply(0.7));
-        if !st.show_horizon {
-            page.compass(ui, areas.free);
-        }
-    }
-    if let Some(side) = areas.side {
-        page.side_panel(ui, st, rt, side);
     }
     // the chosen point of interest or plan, in front of everything
     let mut front =
         ui.new_child(egui::UiBuilder::new().layer_id(egui::LayerId::new(egui::Order::Middle, egui::Id::new("planner-record-popup"))).max_rect(full));
+    bigcard::grow(ui.ctx(), card);
     page.record_popup(&mut front, st, rt, areas.free);
     page.calc_popup(&mut front, st, rt, areas.free);
     page.sky_popup(&mut front, st, rt, areas.free);
     page.align_popup(&mut front, st, rt, areas.free);
     page.find_popup(&mut front, st, rt, areas.free);
+    page.info_popup(&mut front, st, rt, areas.free);
+    page.card_ghost(&mut front, card, areas.free);
 
     for intent in intents {
         apply(app, ui.ctx(), intent);
@@ -2217,7 +2227,12 @@ mod tests {
         toggle(&mut rt, Card::Find);
         assert!(rt.find_open && !rt.sky_open);
         toggle(&mut rt, Card::Find);
-        assert!(!(rt.find_open || rt.sky_open || rt.align_open || rt.calc_open));
+        assert!(!(rt.find_open || rt.sky_open || rt.align_open || rt.calc_open || rt.info_card));
+        toggle(&mut rt, Card::Info);
+        assert!(rt.info_card && !rt.sky_open);
+        // the buttons along the top of a card pick another one (see `card_tabs`)
+        bigcard::open_only(&mut rt, Card::Calc);
+        assert!(rt.calc_open && !rt.info_card);
         for tab in [Tab::Sun, Tab::Moon, Tab::Night, Tab::Calendar, Tab::Info] {
             for target in [None, Some([43.4, -1.8])] {
                 let mut app = new_app();
@@ -2227,14 +2242,76 @@ mod tests {
                     for size in [vec2(300.0, 400.0), vec2(1000.0, 700.0), vec2(1900.0, 1000.0)] {
                         draw(&mut app, size);
                     }
-                    // the side panel steps aside when the card opens, and stays away once it is closed
-                    assert!(app.ui.planner.panel_hidden);
                     toggle(&mut app.planner, card);
                     draw(&mut app, vec2(1000.0, 700.0));
-                    assert!(app.ui.planner.panel_hidden && !(app.planner.sky_open || app.planner.align_open));
-                    app.ui.planner.panel_hidden = false;
+                    assert!(!(app.planner.sky_open || app.planner.align_open));
                 }
             }
+        }
+    }
+
+    /// One frame at time `at` (seconds) on a context that is kept, so the animations advance.
+    fn frame(ctx: &egui::Context, app: &mut App, size: egui::Vec2, at: f64) {
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)), time: Some(at), ..Default::default() };
+        let mut output = ctx.run_ui(input, |ui| show(app, ui));
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn the_central_card_grows_from_the_middle_and_shrinks_back_without_replaying_when_changing_cards() {
+        let k = |ctx: &egui::Context| ctx.data(|d| d.get_temp::<f32>(egui::Id::new("planner-card-grow-k"))).unwrap_or(-1.0);
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        crate::theme::apply(&ctx);
+        let mut app = new_app();
+        app.ui.planner.placed = true;
+        let size = vec2(1400.0, 900.0);
+        frame(&ctx, &mut app, size, 0.0);
+        assert_eq!(k(&ctx), 0.0, "closed");
+        bigcard::open_only(&mut app.planner, bigcard::Card::Info);
+        frame(&ctx, &mut app, size, 0.05);
+        frame(&ctx, &mut app, size, 0.12);
+        let mid = k(&ctx);
+        assert!(mid > 0.0 && mid < 1.0, "growing: {mid}");
+        for i in 0..10 {
+            frame(&ctx, &mut app, size, 0.5 + 0.1 * f64::from(i));
+        }
+        assert_eq!(k(&ctx), 1.0, "open");
+        // another card does not replay the opening
+        bigcard::open_only(&mut app.planner, bigcard::Card::Sky);
+        frame(&ctx, &mut app, size, 2.0);
+        assert_eq!(k(&ctx), 1.0);
+        // closing shrinks it back
+        app.planner.sky_open = false;
+        frame(&ctx, &mut app, size, 2.05);
+        frame(&ctx, &mut app, size, 2.12);
+        let mid = k(&ctx);
+        assert!(mid > 0.0 && mid < 1.0, "shrinking: {mid}");
+        for i in 0..10 {
+            frame(&ctx, &mut app, size, 3.0 + 0.1 * f64::from(i));
+        }
+        assert_eq!(k(&ctx), 0.0);
+    }
+
+    #[test]
+    fn the_information_card_draws_at_any_size_and_the_page_draws_with_the_icons_only() {
+        for size in [vec2(300.0, 400.0), vec2(800.0, 600.0), vec2(1900.0, 1000.0)] {
+            let mut app = new_app();
+            app.ui.planner = PlannerState { placed: true, ..Default::default() };
+            draw(&mut app, size);
+            app.planner.info_card = true;
+            draw(&mut app, size);
+            // each mode of the map keeps its rail
+            for mode in [MapMode::Pois, MapMode::Plans, MapMode::Planner] {
+                app.ui.planner.map_mode = mode;
+                draw(&mut app, size);
+            }
+            // the island's cards open under the pointer or by a click
+            app.planner.info_card = false;
+            app.planner.island_pin = Some(2);
+            draw(&mut app, size);
+            app.planner.island_pin = Some(0);
+            draw(&mut app, size);
         }
     }
 

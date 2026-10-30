@@ -122,14 +122,9 @@ impl Page<'_> {
             return;
         }
         let t = self.t;
-        let r = free.shrink(8.0);
-        if r.width() < 200.0 || r.height() < 160.0 {
-            return;
-        }
-        super::layout::surface_big(ui.painter(), r, &t);
+        let Some(r) = super::bigcard::open_rect(ui, &t, free) else { return };
         let _ = ui.interact(r, egui::Id::new("planner-find-bg"), Sense::click_and_drag());
-        let painter = ui.painter().with_clip_rect(r);
-        painter.text(pos2(r.left() + 20.0, r.top() + 28.0), Align2::LEFT_CENTER, crate::i18n::tr("Find"), t.semibold(16.0), t.text);
+        self.card_tabs(ui, rt, r, super::bigcard::Card::Find);
         let close = Rect::from_min_size(pos2(r.right() - 16.0 - 28.0, r.top() + 14.0), vec2(28.0, 28.0));
         let mut head = ui.new_child(egui::UiBuilder::new().max_rect(close));
         if icon_button(&mut head, "plannerFindClose", Icon::Close, vec2(28.0, 28.0), false, true, "Close").clicked() {
@@ -166,7 +161,8 @@ impl Page<'_> {
             });
         });
         if let Some(right) = right {
-            painter.line_segment([pos2(right.left(), right.top() + 4.0), pos2(right.left(), right.bottom() - 12.0)], Stroke::new(1.0, t.divider));
+            ui.painter()
+                .line_segment([pos2(right.left(), right.top() + 4.0), pos2(right.left(), right.bottom() - 12.0)], Stroke::new(1.0, t.divider));
             let mut rui = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(egui::Layout::top_down(Align::Min)));
             rui.set_clip_rect(right);
             super::popup::card_scroll(&mut rui, "planner-find-right", right, |ui| {

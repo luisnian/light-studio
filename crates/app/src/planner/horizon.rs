@@ -58,11 +58,11 @@ pub(super) fn key_of(st: &PlannerState) -> HorizonKey {
     (st.lat.to_bits(), st.lon.to_bits())
 }
 
-/// Where the skyline goes: the map's free part, under the search box and beside the date and time cards (when there is
-/// room for it; on a narrow window it runs underneath them).
+/// Where the skyline goes: the map's free part, beside the three icons of the search, date and time (when there is
+/// room for it; on a narrow window it runs underneath them; their cards open over it).
 pub(super) fn view_rect(free: Rect) -> Rect {
-    let top = free.top() + 44.0;
-    let beside = super::layout::cards_rects(free)[0].right() + 8.0;
+    let top = free.top();
+    let beside = super::layout::island_rects(free, 3).chip.right() + 8.0;
     let left = if free.right() - 8.0 - beside >= 420.0 { beside } else { free.left() + 8.0 };
     let r = Rect::from_min_max(pos2(left, top.min(free.bottom())), pos2(free.right() - 8.0, free.bottom() - 8.0));
     if r.width() > 0.0 && r.height() > 0.0 { r } else { Rect::from_min_size(r.min, vec2(0.0, 0.0)) }
@@ -145,6 +145,47 @@ pub(super) fn sky_colours(sun_alt: f64, dark_ui: bool) -> (Color32, Color32) {
 }
 
 impl Page<'_> {
+    /// The day as a slider under the skyline (the time bar is not shown here): the track is tinted by the Sun's height, so
+    /// night, dusk and day can be told apart, and dragging it moves the Sun and the Moon on the skyline at once.
+    pub(super) fn time_slider(&mut self, ui: &mut Ui, st: &mut PlannerState, r: Rect) {
+        if r.width() < 120.0 || r.height() < 20.0 {
+            return;
+        }
+        let t = self.t;
+        let track = Rect::from_min_max(pos2(r.left() + 40.0, r.center().y - 7.0), pos2(r.right() - 40.0, r.center().y + 7.0));
+        let resp = ui.interact(r, egui::Id::new("planner-mountains-time"), Sense::click_and_drag());
+        if (resp.dragged() || resp.clicked())
+            && let Some(p) = resp.interact_pointer_pos()
+        {
+            let f = f64::from(((p.x - track.left()) / track.width().max(1.0)).clamp(0.0, 1.0));
+            st.minute = Some((f * 1439.0).round());
+        }
+        let p = ui.painter();
+        p.rect_filled(r, R_CONTROL, t.inset.gamma_multiply(0.9));
+        let dark = ui.visuals().dark_mode;
+        // the track, in slices coloured by the Sun's height at that time of the day
+        let slices = 96;
+        for k in 0..slices {
+            let (f0, f1) = (k as f32 / slices as f32, (k + 1) as f32 / slices as f32);
+            let minute = (f64::from(f0) + f64::from(f1)) / 2.0 * 1439.0;
+            let alt = light_studio_astro::sun_horizontal(self.c.start + minute * 60.0, self.obs).alt;
+            let (_, tint) = sky_colours(alt, dark);
+            let slice = Rect::from_min_max(
+                pos2(track.left() + track.width() * f0, track.top()),
+                pos2(track.left() + track.width() * f1 + 0.5, track.bottom()),
+            );
+            p.rect_filled(slice, 0.0, tint);
+        }
+        p.rect_stroke(track, 7.0, egui::Stroke::new(1.0, t.divider), egui::StrokeKind::Inside);
+        for h in [0, 6, 12, 18, 24] {
+            let x = track.left() + track.width() * h as f32 / 24.0;
+            p.text(pos2(x, r.bottom() - 2.0), Align2::CENTER_BOTTOM, format!("{h:02}"), t.font(9.5), t.text_dim);
+        }
+        let x = track.left() + track.width() * (self.minute / 1439.0).clamp(0.0, 1.0) as f32;
+        p.circle_filled(pos2(x, track.center().y), 8.0, Color32::WHITE);
+        p.circle_stroke(pos2(x, track.center().y), 8.0, egui::Stroke::new(1.5, t.accent));
+        p.text(pos2(r.left() + 6.0, track.center().y), Align2::LEFT_CENTER, clock_minutes(self.minute), t.semibold(11.5), t.text);
+    }
     pub(super) fn horizon_strip(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, r: Rect) {
         let t = self.t;
         let pal = self.pal;
@@ -485,12 +526,12 @@ mod tests {
     }
 
     #[test]
-    fn the_skyline_fills_the_free_part_beside_the_cards() {
+    fn the_skyline_fills_the_free_part_beside_the_icons() {
         for (w, h) in [(300.0, 200.0), (1100.0, 700.0), (50.0, 30.0)] {
             let free = Rect::from_min_size(pos2(10.0, 10.0), vec2(w, h));
             let r = view_rect(free);
             assert!(free.contains_rect(r) || r.height() <= 0.0, "{w}×{h}: {r:?}");
-            assert!(r.top() >= free.top() + 44.0 - 1e-3 || r.height() <= 0.0, "{w}×{h}: {r:?}");
+            assert!(r.top() >= free.top() - 1e-3 || r.height() <= 0.0, "{w}×{h}: {r:?}");
             assert!(
                 r.height() <= 0.0 || ((r.right() - (free.right() - 8.0)).abs() < 1e-3 && (r.bottom() - (free.bottom() - 8.0)).abs() < 1e-3),
                 "{w}×{h}: {r:?}"

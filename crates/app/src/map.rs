@@ -120,6 +120,14 @@ impl Runtime {
         self.frame = self.frame.wrapping_add(1);
     }
 
+    /// The credit the tiles in use must show (the satellite view has Esri's; the plain map, its source's).
+    pub fn credit(&self, satellite: bool) -> String {
+        if satellite {
+            return crate::services::map_tiles::SATELLITE_ATTRIBUTION.to_string();
+        }
+        self.tiles.as_ref().map(|t| t.source().attribution().to_string()).unwrap_or_default()
+    }
+
     /// Forgets the service and its tiles (the source changed).
     pub fn reset(&mut self) {
         self.tiles = None;

@@ -10,7 +10,7 @@ use crate::services::map_tiles;
 
 use super::skylayers::{LineStyle, MOON_NOW, MOONRISE, MOONSET, SUN_NOW, SUNRISE, SUNSET, band, geodesic, wedge};
 use super::*;
-use crate::map::{Cam, MAX_ZOOM, MIN_ZOOM, clamp_view, draw_tiles, view_at, zoom_about};
+use crate::map::{Cam, clamp_view, draw_tiles, view_at, zoom_about};
 
 impl Page<'_> {
     /// The map over all of `outer`; `free` is the part not under the floating panels (where its own buttons, hint and
@@ -315,32 +315,36 @@ impl Page<'_> {
             }
         }
 
-        // the mode menu, zoom, recentre and then the icons of the mode shown, top right
+        // the rail, top right: the map mode alone at rest; under the pointer it grows downward (the icons of the mode shown,
+        // then the information card), like the island on the left. The map zooms with the wheel or a pinch.
         let count = match mode {
-            MapMode::Pois => 10,
-            MapMode::Plans => 9,
-            MapMode::Planner => 15,
+            MapMode::Pois | MapMode::Plans => 6,
+            MapMode::Planner => 12,
         };
-        let bar = Rect::from_min_size(pos2(self.rail_right - layout::RAIL_W, free.top()), vec2(layout::RAIL_W, count as f32 * 34.0 + 6.0));
-        let k = super::layout::card_opacity(ui.ctx(), "rail", bar, false);
+        let sz = vec2(32.0, 34.0);
+        let rail_x = self.rail_right - layout::RAIL_W;
+        let full_bar = Rect::from_min_size(pos2(rail_x, free.top()), vec2(layout::RAIL_W, count as f32 * 34.0 + 6.0));
+        let rest_bar = Rect::from_min_size(full_bar.min, vec2(layout::RAIL_W, 40.0));
+        let grow_id = egui::Id::new("planner-rail-grow");
+        let prev: Rect = ctx.data(|d| d.get_temp(grow_id)).unwrap_or(rest_bar);
+        let zone = prev.union(rest_bar).expand2(vec2(4.0, 4.0));
+        let over = ctx.pointer_hover_pos().is_some_and(|q| zone.contains(q)) || rt.mode_menu || rt.layers_open;
+        let a = ctx.animate_bool_with_time(egui::Id::new("planner-rail-open"), over, 0.2);
+        let a = a * a * (3.0 - 2.0 * a);
+        let bar = Rect::from_min_size(full_bar.min, vec2(layout::RAIL_W, rest_bar.height() + (full_bar.height() - rest_bar.height()) * a));
+        ctx.data_mut(|d| d.insert_temp(grow_id, bar));
+        let k = super::layout::card_opacity(ui.ctx(), "rail", bar, over);
         painter.rect_filled(bar.translate(vec2(0.0, 1.5)), 9.0, Color32::from_black_alpha(50).gamma_multiply(k));
         crate::theme::paint_chip_at(&painter, bar, &t, k);
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(bar.shrink2(vec2(2.0, 3.0))).layout(egui::Layout::top_down(Align::Center)));
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(full_bar.shrink2(vec2(2.0, 3.0))).layout(egui::Layout::top_down(Align::Center)));
+        child.set_clip_rect(bar.shrink2(vec2(0.0, 1.0)).intersect(ui.clip_rect()));
         child.spacing_mut().item_spacing.y = 0.0;
-        let sz = vec2(32.0, 34.0);
-        let z = st.map.zoom;
         let mode_label = MAP_MODES.iter().find(|(m, _, _)| *m == mode).map_or("", |(_, _, l)| *l);
         let mode_tip = format!("{}: {}", crate::i18n::tr("Map Mode"), crate::i18n::tr(mode_label));
         if crate::widgets::icon_button_grow(&mut child, "plannerMapMode", mode.icon(), sz, rt.mode_menu, true, &mode_tip).clicked() {
             rt.mode_menu = !rt.mode_menu;
         }
-        let mode_button = Rect::from_min_size(bar.min + vec2(2.0, 3.0), sz);
-        if crate::widgets::icon_button_grow(&mut child, "plannerMapIn", Icon::Plus, sz, false, z < MAX_ZOOM, "Zoom In").clicked() {
-            st.map.zoom = (z + 1.0).round().min(MAX_ZOOM);
-        }
-        if crate::widgets::icon_button_grow(&mut child, "plannerMapOut", Icon::Minus, sz, false, z > MIN_ZOOM, "Zoom Out").clicked() {
-            st.map.zoom = (z - 1.0).round().max(MIN_ZOOM);
-        }
+        let mode_button = Rect::from_min_size(full_bar.min + vec2(2.0, 3.0), sz);
         if crate::widgets::icon_button_grow(&mut child, "plannerMapHome", Icon::Fit, sz, false, true, "Centre on the Place").clicked() {
             st.map.lat = st.lat;
             st.map.lon = st.lon;
@@ -426,20 +430,14 @@ impl Page<'_> {
         if crate::widgets::icon_button_grow_tint(&mut child, "plannerMapSync", Icon::Cloud, sz, self.syncing, !self.syncing, tip, tint).clicked() {
             self.intents.push(Intent::SyncPois);
         }
-        if crate::widgets::icon_button_grow(&mut child, "plannerSettings", Icon::Gear, sz, false, true, "Settings").clicked() {
-            self.intents.push(Intent::OpenSettings);
-        }
-        let tip = if st.panel_hidden { "Show the Panel" } else { "Hide the Panel" };
-        if crate::widgets::icon_button_grow(&mut child, "plannerPanel", Icon::Sidebar, sz, !st.panel_hidden, true, tip).clicked() {
-            st.panel_hidden = !st.panel_hidden;
+        let tip = if rt.info_card { "Close the Information" } else { "Information" };
+        if crate::widgets::icon_button_grow(&mut child, "plannerPanel", Icon::Info, sz, rt.info_card, true, tip).clicked() {
+            super::bigcard::toggle(rt, super::bigcard::Card::Info);
         }
         if rt.layers_open && planner {
             self.layers_panel(ui, st, rt, bar, free);
         }
-        if st.strip && planner {
-            self.info_strip(ui, st, rt, free);
-        }
-        // last, so the list lies over the info strip and the other cards (its first row was hidden under the strip)
+        // last, so the list lies over the other cards
         if rt.mode_menu {
             self.mode_menu(ui, st, rt, mode_button);
         }
@@ -451,11 +449,16 @@ impl Page<'_> {
             crate::theme::paint_chip(&painter, hr, &t);
             painter.galley(pos2(hr.left() + 10.0, hr.center().y - hint.size().y / 2.0), hint, t.text);
         }
+        // the tiles' credit (the imagery's licence asks for it) folds into a small © at the corner; the text shows on hover
+        let mut credit = self.tiles.credit(self.satellite);
         if planner && st.show_light {
-            let a = painter.layout_no_wrap(map_tiles::LIGHT_POLLUTION_ATTRIBUTION.to_string(), t.font(9.5), t.text_dim);
-            let ar = Rect::from_min_size(pos2(free.left(), free.top() + 44.0), a.size() + vec2(8.0, 4.0));
-            painter.rect_filled(ar, 4.0, t.chrome.gamma_multiply(0.7));
-            painter.galley(ar.min + vec2(4.0, 2.0), a, t.text_dim);
+            credit = format!("{credit} · {}", map_tiles::LIGHT_POLLUTION_ATTRIBUTION);
+        }
+        if !credit.trim().is_empty() {
+            let cr = Rect::from_min_size(pos2(free.left() + 4.0, free.bottom() - 20.0), vec2(18.0, 16.0));
+            let resp = ui.interact(cr, egui::Id::new("planner-credit"), Sense::hover());
+            painter.text(cr.center(), Align2::CENTER_CENTER, "©", t.font(11.0), if resp.hovered() { t.text } else { t.text_dim.gamma_multiply(0.7) });
+            resp.on_hover_text(credit);
         }
     }
 }
@@ -503,7 +506,7 @@ impl Page<'_> {
         let t = self.t;
         let w = 232.0;
         let h = 460.0_f32.min(free.height() - 66.0).max(120.0);
-        let r = Rect::from_min_size(pos2(bar.left() - w - 8.0, free.top() + if st.strip { 66.0 } else { 0.0 }), vec2(w, h));
+        let r = Rect::from_min_size(pos2(bar.left() - w - 8.0, free.top()), vec2(w, h));
         let painter = ui.painter();
         painter.rect_filled(r.translate(vec2(0.0, 1.5)), 12.0, Color32::from_black_alpha(50));
         crate::theme::paint_chip(painter, r, &t);

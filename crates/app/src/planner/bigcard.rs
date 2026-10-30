@@ -1,5 +1,5 @@
-//! The Sky and Line Up cards: like Find and the calculations, each opens in a card of its own over the map, with room for
-//! its parts side by side, instead of squeezed into the side panel.
+//! The cards over the map: Information, Sky, Line Up, Find and the calculations share one central card that opens from
+//! the middle of the screen, with the buttons that pick which one is shown along its top.
 
 use super::skycal::SkyMode;
 use super::*;
@@ -11,6 +11,7 @@ pub(super) enum Card {
     Align,
     Calc,
     Find,
+    Info,
 }
 
 /// Opens (or, if already open, closes) a card and closes the others and any record in front.
@@ -20,6 +21,7 @@ pub(super) fn toggle(rt: &mut Runtime, card: Card) {
         Card::Align => rt.align_open,
         Card::Calc => rt.calc_open,
         Card::Find => rt.find_open,
+        Card::Info => rt.info_card,
     };
     close_all(rt);
     if !was {
@@ -34,7 +36,7 @@ pub(super) fn open_only(rt: &mut Runtime, card: Card) {
 }
 
 fn close_all(rt: &mut Runtime) {
-    (rt.sky_open, rt.align_open, rt.calc_open, rt.find_open) = (false, false, false, false);
+    (rt.sky_open, rt.align_open, rt.calc_open, rt.find_open, rt.info_card) = (false, false, false, false, false);
 }
 
 fn open(rt: &mut Runtime, card: Card) {
@@ -43,6 +45,7 @@ fn open(rt: &mut Runtime, card: Card) {
         Card::Align => rt.align_open = true,
         Card::Calc => rt.calc_open = true,
         Card::Find => rt.find_open = true,
+        Card::Info => rt.info_card = true,
     }
     rt.site_open = None;
     rt.plan_popup = None;
@@ -73,21 +76,100 @@ enum Item {
 const SKY_TABS: [Tab; 4] = [Tab::Sun, Tab::Moon, Tab::Night, Tab::Calendar];
 
 impl Page<'_> {
-    /// The frame of a card: the surface, the title and the close button. Gives the body and whether it was closed.
-    fn card_shell(&mut self, ui: &mut Ui, free: Rect, title: &str, id: &str) -> Option<(Rect, bool)> {
+    /// The frame of a card: the surface (growing from the middle of the screen when it opens), the buttons that pick the
+    /// card and the close button. Gives the body and whether it was closed.
+    fn card_shell(&mut self, ui: &mut Ui, rt: &mut Runtime, free: Rect, card: Card, id: &str) -> Option<(Rect, bool)> {
         let t = self.t;
-        let r = super::popup::calc_rect(free);
-        if r.width() < 200.0 || r.height() < 160.0 {
-            return None;
-        }
-        super::layout::surface_big(ui.painter(), r, &t);
+        let r = open_rect(ui, &t, free)?;
         let _ = ui.interact(r, egui::Id::new((id, "bg")), Sense::click_and_drag());
-        let painter = ui.painter().with_clip_rect(r);
-        painter.text(pos2(r.left() + 20.0, r.top() + 28.0), Align2::LEFT_CENTER, crate::i18n::tr(title), t.semibold(16.0), t.text);
+        self.card_tabs(ui, rt, r, card);
         let close = Rect::from_min_size(pos2(r.right() - 16.0 - 28.0, r.top() + 14.0), vec2(28.0, 28.0));
         let mut head = ui.new_child(egui::UiBuilder::new().max_rect(close));
         let closed = icon_button(&mut head, &format!("{id}Close"), Icon::Close, vec2(28.0, 28.0), false, true, "Close").clicked();
         Some((Rect::from_min_max(pos2(r.left() + 1.0, r.top() + 52.0), r.max - vec2(1.0, 1.0)), closed))
+    }
+
+    /// The buttons along the top of a card that pick which one is shown (Information, Sky, Line Up, Find, Calculations).
+    pub(super) fn card_tabs(&mut self, ui: &mut Ui, rt: &mut Runtime, r: Rect, current: Card) {
+        let t = self.t;
+        let mut x = r.left() + 16.0;
+        for (card, id, label) in CARDS {
+            let text = crate::i18n::tr(label);
+            let galley = ui.painter().layout_no_wrap(text.to_string(), t.font(13.0), t.text);
+            let cell = Rect::from_min_size(pos2(x, r.top() + 13.0), vec2(galley.size().x + 24.0, 30.0));
+            x = cell.right() + 4.0;
+            if cell.right() > r.right() - 56.0 {
+                break;
+            }
+            let resp = ui.interact(cell, egui::Id::new(("planner-card-tab", id)), Sense::click());
+            let on = card == current;
+            let p = ui.painter().with_clip_rect(r);
+            if on {
+                p.rect_filled(cell, R_CONTROL, t.tool_active);
+            } else if resp.hovered() {
+                p.rect_filled(cell, R_CONTROL, t.hover.gamma_multiply(0.6));
+            }
+            let color = if on {
+                t.text
+            } else if resp.hovered() {
+                t.text_label
+            } else {
+                t.text_dim
+            };
+            p.text(cell.center(), Align2::CENTER_CENTER, text, t.semibold(13.0), color);
+            if resp.clicked() && !on {
+                open_only(rt, card);
+            }
+        }
+    }
+
+    /// The Information card: the place and its coordinates on the left, the facts of the day on the right.
+    pub(super) fn info_popup(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, free: Rect) {
+        if !rt.info_card {
+            return;
+        }
+        if super::popup::shown(st, rt).is_some() {
+            rt.info_card = false;
+            return;
+        }
+        let Some((body, closed)) = self.card_shell(ui, rt, free, Card::Info, "plannerInfo") else { return };
+        if closed {
+            rt.info_card = false;
+        }
+        let wide = body.width() >= 700.0;
+        let left_w = if wide { 360.0 } else { body.width() };
+        let left = Rect::from_min_size(body.min, vec2(left_w, if wide { body.height() } else { (body.height() * 0.45).max(200.0) }));
+        let mut l = ui.new_child(egui::UiBuilder::new().max_rect(left).layout(egui::Layout::top_down(Align::Min)));
+        l.set_clip_rect(left);
+        super::popup::card_scroll(&mut l, "planner-info-left", left, |ui| {
+            egui::Frame::NONE.inner_margin(Margin { left: 20, right: 16, top: 4, bottom: 20 }).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                self.side_head(ui, st, rt);
+            });
+        });
+        let right = if wide {
+            Rect::from_min_max(pos2(left.right(), body.top()), body.max)
+        } else {
+            Rect::from_min_max(pos2(body.left(), left.bottom()), body.max)
+        };
+        let mut c = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(egui::Layout::top_down(Align::Min)));
+        c.set_clip_rect(right);
+        super::popup::card_scroll(&mut c, "planner-info-right", right, |ui| {
+            egui::Frame::NONE.inner_margin(Margin { left: 16, right: 20, top: 4, bottom: 24 }).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                self.pane(ui, st, rt, Tab::Info);
+            });
+        });
+    }
+
+    /// A card that has just been closed shrinks back into the middle of the screen, fading out.
+    pub(super) fn card_ghost(&mut self, ui: &mut Ui, open: bool, free: Rect) {
+        let k = ui.ctx().data(|d| d.get_temp::<f32>(egui::Id::new("planner-card-grow-k"))).unwrap_or(0.0);
+        if open || k <= 0.001 {
+            return;
+        }
+        let (rect, a) = grown(super::popup::calc_rect(free), k);
+        super::layout::surface_big_at(ui.painter(), rect, &self.t, a);
     }
 
     pub(super) fn sky_popup(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, free: Rect) {
@@ -98,7 +180,7 @@ impl Page<'_> {
             rt.sky_open = false;
             return;
         }
-        let Some((body, closed)) = self.card_shell(ui, free, "Sky", "plannerSky") else { return };
+        let Some((body, closed)) = self.card_shell(ui, rt, free, Card::Sky, "plannerSky") else { return };
         if closed {
             rt.sky_open = false;
         }
@@ -226,7 +308,7 @@ impl Page<'_> {
             rt.align_open = false;
             return;
         }
-        let Some((body, closed)) = self.card_shell(ui, free, "Line Up", "plannerAlign") else { return };
+        let Some((body, closed)) = self.card_shell(ui, rt, free, Card::Align, "plannerAlign") else { return };
         if closed {
             rt.align_open = false;
         }
@@ -241,7 +323,44 @@ impl Page<'_> {
     }
 }
 
-/// The panel's own tab (Information): every card closes.
-pub(super) fn toggle_off(rt: &mut Runtime) {
-    close_all(rt);
+/// The cards the buttons along their top pick from: the card, its id and its name.
+const CARDS: [(Card, &str, &str); 5] = [
+    (Card::Info, "info", "Information"),
+    (Card::Sky, "sky", "Sky"),
+    (Card::Align, "align", "Line Up"),
+    (Card::Find, "find", "Find"),
+    (Card::Calc, "calc", "Calculations"),
+];
+
+/// How far open the central card is (0 = a dot in the middle of the screen, 1 = the whole card), eased; one value for all
+/// the cards, so changing from one to another does not replay the opening.
+pub(super) fn grow(ctx: &egui::Context, open: bool) -> f32 {
+    let k = ctx.animate_bool_with_time(egui::Id::new("planner-card-grow"), open, 0.28);
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("planner-card-grow-k"), k));
+    k
+}
+
+/// The card's rectangle at `k` of its opening, and its opacity: it comes out of the middle like the island.
+fn grown(full: Rect, k: f32) -> (Rect, f32) {
+    let e = k * k * (3.0 - 2.0 * k);
+    let start = Rect::from_center_size(full.center(), vec2(64.0, 40.0));
+    (Rect::from_min_max(start.min.lerp(full.min, e), start.max.lerp(full.max, e)), e.clamp(0.0, 1.0))
+}
+
+/// The rectangle a big card is drawn in. While it is still growing, only its surface is drawn (and none gives back);
+/// too small a room gives none either.
+pub(super) fn open_rect(ui: &mut Ui, t: &Tokens, free: Rect) -> Option<Rect> {
+    let full = super::popup::calc_rect(free);
+    if full.width() < 200.0 || full.height() < 160.0 {
+        return None;
+    }
+    let k = ui.ctx().data(|d| d.get_temp::<f32>(egui::Id::new("planner-card-grow-k"))).unwrap_or(1.0);
+    if k < 0.999 {
+        let (rect, a) = grown(full, k);
+        super::layout::surface_big_at(ui.painter(), rect, t, a);
+        let _ = ui.interact(rect, egui::Id::new("planner-card-growing"), Sense::click_and_drag());
+        return None;
+    }
+    super::layout::surface_big(ui.painter(), full, t);
+    Some(full)
 }

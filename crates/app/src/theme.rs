@@ -206,8 +206,8 @@ pub fn paint_card(p: &Painter, r: Rect, t: &Tokens, k: f32) {
 }
 
 /// A card that holds a lot of text over the map (the big cards): the same glass, more opaque so the map does not get in the way.
-pub fn paint_card_big(p: &Painter, r: Rect, t: &Tokens) {
-    paint_glass(p, r, t, 226, 1.0);
+pub fn paint_card_big(p: &Painter, r: Rect, t: &Tokens, k: f32) {
+    paint_glass(p, r, t, 226, k.clamp(0.0, 1.0));
 }
 
 fn paint_glass(p: &Painter, r: Rect, t: &Tokens, alpha: u8, k: f32) {
