@@ -23,6 +23,8 @@ pub struct Settings {
     pub pdi: PdiSettings,
     /// `en` or `es`; empty follows the system.
     pub language: String,
+    /// The red-light look, to keep night vision in the field.
+    pub red_light: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

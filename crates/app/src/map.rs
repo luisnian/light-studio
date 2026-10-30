@@ -248,13 +248,14 @@ pub(crate) fn draw_tiles(
     let mut want: Vec<(f32, TileKey)> = Vec::new();
     for (i, &style) in base.iter().enumerate() {
         // the names come after the picture under them
-        let layer = Layer { style, zoom: z, lookup: 6, tint: Color32::WHITE, rank: i as f32 * 1e9 };
+        let layer = Layer { style, zoom: z, lookup: 6, tint: crate::theme::map_tint(), rank: i as f32 * 1e9 };
         paint_layer(rt, painter, rect, cam, now, &layer, &mut want);
     }
     // the light pollution atlas has its own numbering: 1024-pixel tiles, level 0 the whole world
     if light {
         let lz = (level - 2.0).clamp(0.0, f64::from(map_tiles::LIGHT_POLLUTION_MAX_Z)) as u8;
-        let layer = Layer { style: MapStyle::LightPollution, zoom: lz, lookup: 4, tint: Color32::WHITE.gamma_multiply(LIGHT_OPACITY), rank: 2e9 };
+        let layer =
+            Layer { style: MapStyle::LightPollution, zoom: lz, lookup: 4, tint: crate::theme::map_tint().gamma_multiply(LIGHT_OPACITY), rank: 2e9 };
         paint_layer(rt, painter, rect, cam, now, &layer, &mut want);
     }
     // farthest first: the service takes the last ones first

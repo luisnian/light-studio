@@ -47,6 +47,7 @@ impl App {
     pub fn new(ctx: egui::Context, ui: UiState, styled: bool) -> App {
         let language = crate::i18n::Language::parse(&ui.settings.language).unwrap_or_else(crate::i18n::Language::from_system);
         crate::i18n::set_language(language);
+        crate::theme::set_red_light(ui.settings.red_light);
         App {
             ctx,
             ui,

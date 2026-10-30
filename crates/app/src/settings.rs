@@ -66,6 +66,10 @@ fn general(app: &mut App, ui: &mut Ui, t: &Tokens) {
             }
         }
     });
+    if ui.checkbox(&mut app.ui.settings.red_light, tr("Red-light look (keeps night vision)")).changed() {
+        crate::theme::set_red_light(app.ui.settings.red_light);
+        crate::theme::apply(ui.ctx());
+    }
     row(ui, t, "CARTO key", |ui| {
         TextField::singleline("field:cartoKey", &mut app.ui.map_carto_key).hint(tr("Optional: a key for CARTO's plain map")).width(260.0).show(ui);
     });

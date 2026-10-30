@@ -1,6 +1,8 @@
 //! Colours, type and shapes. One set of [`Tokens`] for the dark look and one for the light, picked from the egui visuals
 //! in use, and the few painting helpers every floating panel shares.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use egui::{Color32, Context, CornerRadius, FontFamily, FontId, Painter, Rect, Stroke, StrokeKind};
 
 /// Corner radius of the cards and panels floating over the map.
@@ -9,6 +11,24 @@ pub const R_CARD: f32 = 12.0;
 pub const R_CONTROL: f32 = 7.0;
 /// Corner radius of small tiles and chips.
 pub const R_TILE: f32 = 8.0;
+
+/// The red-light look is on (it keeps night vision: nothing but red reaches the eye).
+static RED_LIGHT: AtomicBool = AtomicBool::new(false);
+
+/// Turns the red-light look on or off. Call [`apply`] afterwards.
+pub fn set_red_light(on: bool) {
+    RED_LIGHT.store(on, Ordering::Relaxed);
+}
+
+/// The red-light look is on.
+pub fn red_light() -> bool {
+    RED_LIGHT.load(Ordering::Relaxed)
+}
+
+/// The colour map tiles are multiplied by: white, or a deep red in the red-light look.
+pub fn map_tint() -> Color32 {
+    if red_light() { Color32::from_rgb(255, 40, 30) } else { Color32::WHITE }
+}
 
 /// The family text of a heavier weight is set in (see [`install_fonts`]).
 const SEMIBOLD: &str = "semibold";
@@ -100,9 +120,43 @@ impl Tokens {
         }
     }
 
+    /// Dark, and only red: no green or blue anywhere, so a dark-adapted eye is not dazzled.
+    pub fn red() -> Tokens {
+        let r = |v: u8| Color32::from_rgb(v, 0, 0);
+        Tokens {
+            dark: true,
+            canvas: r(12),
+            chrome: r(22),
+            backdrop: r(8),
+            inset: r(34),
+            field: r(28),
+            shadow: Color32::from_black_alpha(110),
+            pick: r(230),
+            track: r(60),
+            field_border: r(92),
+            card_stroke: r(84),
+            divider: r(66),
+            hover: r(52),
+            tool_active: r(120),
+            accent: r(255),
+            text: r(236),
+            text_dim: r(170),
+            text_label: r(200),
+            text_disabled: r(104),
+            reject: r(255),
+            caution: r(214),
+        }
+    }
+
     /// The tokens for the look in use.
     pub fn get(ctx: &Context) -> Tokens {
-        if ctx.global_style().visuals.dark_mode { Tokens::dark() } else { Tokens::light() }
+        if red_light() {
+            Tokens::red()
+        } else if ctx.global_style().visuals.dark_mode {
+            Tokens::dark()
+        } else {
+            Tokens::light()
+        }
     }
 
     /// The regular type at `size` points.
@@ -169,7 +223,7 @@ fn visuals(t: &Tokens) -> egui::Visuals {
 pub fn apply(ctx: &Context) {
     // Light Studio is always dark, whatever the system's appearance is
     ctx.set_theme(egui::ThemePreference::Dark);
-    ctx.set_visuals_of(egui::Theme::Dark, visuals(&Tokens::dark()));
+    ctx.set_visuals_of(egui::Theme::Dark, visuals(&if red_light() { Tokens::red() } else { Tokens::dark() }));
     ctx.set_visuals_of(egui::Theme::Light, visuals(&Tokens::light()));
     ctx.all_styles_mut(|s| {
         s.spacing.item_spacing = egui::vec2(8.0, 6.0);
@@ -197,7 +251,13 @@ pub fn paint_chip_at(p: &Painter, r: Rect, t: &Tokens, k: f32) {
 
 /// The graphite glass of cards and menus: a dark grey (a light grey in the light look) that lets the map show through.
 fn glass(t: &Tokens, alpha: u8) -> Color32 {
-    if t.dark { Color32::from_rgba_unmultiplied(36, 36, 39, alpha) } else { Color32::from_rgba_unmultiplied(248, 248, 250, alpha) }
+    if red_light() {
+        Color32::from_rgba_unmultiplied(30, 0, 0, alpha)
+    } else if t.dark {
+        Color32::from_rgba_unmultiplied(36, 36, 39, alpha)
+    } else {
+        Color32::from_rgba_unmultiplied(248, 248, 250, alpha)
+    }
 }
 
 /// A card: graphite glass with a hairline and a soft shadow; `k` (0..1) scales how opaque it is.
@@ -227,6 +287,32 @@ fn paint_glass(p: &Painter, r: Rect, t: &Tokens, alpha: u8, k: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_red_look_has_no_green_or_blue_and_readable_text() {
+        let t = Tokens::red();
+        for c in [
+            t.canvas,
+            t.chrome,
+            t.inset,
+            t.field,
+            t.text,
+            t.text_dim,
+            t.text_label,
+            t.accent,
+            t.hover,
+            t.divider,
+            t.card_stroke,
+            t.pick,
+            t.reject,
+            t.caution,
+            t.tool_active,
+        ] {
+            assert!(c.g() == 0 && c.b() == 0, "{c:?}");
+        }
+        assert!(t.text.r() - t.chrome.r() > 150);
+        assert!(t.text_dim.r() - t.chrome.r() > 100);
+    }
 
     #[test]
     fn each_look_has_readable_text() {
