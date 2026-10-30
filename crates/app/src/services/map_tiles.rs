@@ -18,6 +18,8 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
+
+use crate::services::pmtiles::Archive;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 
 /// Where the tiles come from.
@@ -29,6 +31,8 @@ pub enum Source {
     Osm,
     /// `LIGHT_STUDIO_MAP_TILES`.
     Custom,
+    /// A PMTiles file on this computer (its own credit is kept with it).
+    Offline,
 }
 
 impl Source {
@@ -37,7 +41,7 @@ impl Source {
         match self {
             Source::Carto => "© OpenStreetMap · © CARTO",
             Source::Osm => "© OpenStreetMap",
-            Source::Custom => "",
+            Source::Custom | Source::Offline => "",
         }
     }
 }
@@ -142,6 +146,8 @@ struct Inner {
 }
 
 struct Shared {
+    /// The offline map file, when one is set: it serves the picture styles.
+    archive: Option<Arc<Archive>>,
     inner: Mutex<Inner>,
     wake: Condvar,
     template: String,
@@ -153,6 +159,33 @@ impl Shared {
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// The offline map file in use: its path and the archive, or why it could not be opened.
+static OFFLINE: Mutex<Option<(String, Result<Arc<Archive>, String>)>> = Mutex::new(None);
+
+/// Sets the offline map file (empty: none). The file is opened here; the result is what [`offline_status`] answers.
+pub fn set_offline(path: &str) {
+    let path = path.trim();
+    let mut g = OFFLINE.lock().unwrap_or_else(PoisonError::into_inner);
+    if g.as_ref().is_some_and(|(p, _)| p == path) || (path.is_empty() && g.is_none()) {
+        return;
+    }
+    *g = (!path.is_empty()).then(|| (path.to_string(), Archive::open(std::path::Path::new(path)).map(Arc::new)));
+}
+
+/// The path of the offline map file in use (empty: none).
+pub fn offline_path() -> String {
+    OFFLINE.lock().unwrap_or_else(PoisonError::into_inner).as_ref().map(|(p, _)| p.clone()).unwrap_or_default()
+}
+
+/// `None` without an offline file; else a description of it, or why it cannot be used.
+pub fn offline_status() -> Option<Result<String, String>> {
+    OFFLINE.lock().unwrap_or_else(PoisonError::into_inner).as_ref().map(|(_, r)| r.as_ref().map(|a| a.describe()).map_err(Clone::clone))
+}
+
+fn offline_archive() -> Option<Arc<Archive>> {
+    OFFLINE.lock().unwrap_or_else(PoisonError::into_inner).as_ref().and_then(|(_, r)| r.as_ref().ok().cloned())
 }
 
 /// The tile service of one window.
@@ -203,6 +236,13 @@ impl MapTiles {
     /// CARTO when there's a key (else OpenStreetMap; `LIGHT_STUDIO_MAP_TILES` overrides both), with
     /// the cache in the settings folder.
     pub fn new(carto_key: Option<&str>) -> MapTiles {
+        if let Some(archive) = offline_archive() {
+            let mut m = MapTiles::with(String::new(), Source::Offline, None);
+            if let Some(shared) = Arc::get_mut(&mut m.shared) {
+                shared.archive = Some(archive);
+            }
+            return m;
+        }
         let (template, source) = template(carto_key);
         // one cache per source: a different template never shows another's tiles
         let cache = crate::paths::config_dir().map(|d| d.join("map-tiles").join(format!("{:016x}", fnv(&template))));
@@ -210,7 +250,15 @@ impl MapTiles {
     }
 
     pub fn with(template: String, source: Source, cache: Option<PathBuf>) -> MapTiles {
-        MapTiles { shared: Arc::new(Shared { inner: Mutex::new(Inner::default()), wake: Condvar::new(), template, source, cache }) }
+        MapTiles { shared: Arc::new(Shared { archive: None, inner: Mutex::new(Inner::default()), wake: Condvar::new(), template, source, cache }) }
+    }
+
+    /// The credit the picture tiles must show: the offline file's own, else the source's.
+    pub fn attribution(&self) -> String {
+        match &self.shared.archive {
+            Some(a) => a.attribution.clone(),
+            None => self.shared.source.attribution().to_string(),
+        }
     }
 
     /// Where the tiles come from.
@@ -364,6 +412,18 @@ pub fn tone(t: &mut Tile, style: MapStyle) {
 /// The tile from the cache, else the network (then cached). `Err(true)`: a network failure (may
 /// work later); `Err(false)`: the tile itself is bad.
 fn load(shared: &Shared, k: TileKey, offline: bool) -> Result<Tile, bool> {
+    // the offline file serves the pictures; it has no names layer of its own, and the light atlas still comes by the network
+    if let Some(a) = &shared.archive
+        && k.style != MapStyle::LightPollution
+    {
+        if k.style == MapStyle::Labels {
+            return Err(false);
+        }
+        return match a.tile(k.z, k.x, k.y) {
+            Ok(Some(bytes)) => decode(&bytes).ok_or(false),
+            _ => Err(false),
+        };
+    }
     let path = cache_path(shared, k);
     let cached = path.as_ref().and_then(|p| {
         let meta = std::fs::metadata(p).ok()?;
@@ -565,6 +625,7 @@ mod tests {
     #[test]
     fn the_satellite_view_has_its_own_tiles_and_names_whatever_the_source() {
         let shared = |source| Shared {
+            archive: None,
             inner: Mutex::new(Inner::default()),
             wake: Condvar::new(),
             template: "https://h/{style}/{z}/{x}/{y}.png".into(),
@@ -609,5 +670,40 @@ mod tests {
         tone(&mut light, MapStyle::Light);
         assert!(lum(px(&light, 0)) > 220 && spread(px(&light, 2)) < 20, "{:?}", px(&light, 2));
         assert_eq!(light.rgba[3], 255, "alpha kept");
+    }
+
+    #[test]
+    fn an_offline_file_serves_the_picture_styles_and_nothing_else() {
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([200, 30, 30, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let bytes = crate::services::pmtiles::tests::build(&[(3, 4, 2, png)], false, false, 2);
+        let dir = std::env::temp_dir().join(format!("light-studio-offline-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("region.pmtiles");
+        std::fs::write(&file, bytes).unwrap();
+        let archive = Archive::open(&file).unwrap();
+        let shared = Shared {
+            archive: Some(Arc::new(archive)),
+            inner: Mutex::new(Inner::default()),
+            wake: Condvar::new(),
+            template: String::new(),
+            source: Source::Offline,
+            cache: None,
+        };
+        let have = TileKey::new(MapStyle::Light, 3, 4, 2).unwrap();
+        let t = load(&shared, have, false).unwrap();
+        assert_eq!((t.width, t.height, t.rgba[0]), (8, 8, 200));
+        assert!(load(&shared, TileKey { style: MapStyle::Satellite, ..have }, false).is_ok(), "the satellite view uses the same file");
+        assert_eq!(load(&shared, TileKey { style: MapStyle::Labels, ..have }, false).err(), Some(false));
+        assert_eq!(load(&shared, TileKey::new(MapStyle::Light, 3, 5, 2).unwrap(), false).err(), Some(false), "a tile the file lacks");
+        // the status helpers
+        set_offline(&file.display().to_string());
+        assert!(matches!(offline_status(), Some(Ok(_))));
+        set_offline("/nonexistent/x.pmtiles");
+        assert!(matches!(offline_status(), Some(Err(_))));
+        set_offline("");
+        assert!(offline_status().is_none());
     }
 }

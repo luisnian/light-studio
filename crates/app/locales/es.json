@@ -720,5 +720,11 @@
  "Passes beside the": "Pasa junto al",
  "miss": "error",
  "Orbits from CelesTrak, good for a few days. A transit lasts about a second and its line on the ground is only a few kilometres wide: check it again the day before.": "Órbitas de CelesTrak, válidas unos días. Un tránsito dura cerca de un segundo y su línea en el suelo mide pocos kilómetros de ancho: compruébalo de nuevo el día antes.",
- "Finding satellite passes": "Buscando pasadas de satélites"
+ "Finding satellite passes": "Buscando pasadas de satélites",
+ "Offline map": "Mapa sin conexión",
+ "Path to a .pmtiles raster map file": "Ruta a un mapa ráster .pmtiles",
+ "Choose…": "Elegir…",
+ "Offline map in use:": "Mapa sin conexión en uso:",
+ "The offline map cannot be used:": "No se puede usar el mapa sin conexión:",
+ "A PMTiles file with PNG, JPEG or WebP tiles for your region makes the map work with no network. Vector files are not drawn.": "Un archivo PMTiles con teselas PNG, JPEG o WebP de tu región permite usar el mapa sin red. Los archivos vectoriales no se dibujan."
 }

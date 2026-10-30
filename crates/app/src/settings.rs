@@ -78,6 +78,28 @@ fn general(app: &mut App, ui: &mut Ui, t: &Tokens) {
     row(ui, t, "CARTO key", |ui| {
         TextField::singleline("field:cartoKey", &mut app.ui.map_carto_key).hint(tr("Optional: a key for CARTO's plain map")).width(260.0).show(ui);
     });
+    row(ui, t, "Offline map", |ui| {
+        let r =
+            TextField::singleline("field:offlineMap", &mut app.ui.map_offline).hint(tr("Path to a .pmtiles raster map file")).width(260.0).show(ui);
+        if ui.button(tr("Choose…")).clicked()
+            && let Some(path) = rfd::FileDialog::new().add_filter("PMTiles", &["pmtiles"]).pick_file()
+        {
+            app.ui.map_offline = path.display().to_string();
+            crate::services::map_tiles::set_offline(&app.ui.map_offline);
+        }
+        if r.committed() {
+            crate::services::map_tiles::set_offline(&app.ui.map_offline);
+        }
+    });
+    match crate::services::map_tiles::offline_status() {
+        Some(Ok(d)) => hint(ui, t, &format!("{} {d}", tr("Offline map in use:"))),
+        Some(Err(e)) => hint(ui, t, &format!("{} {e}", tr("The offline map cannot be used:"))),
+        None => hint(
+            ui,
+            t,
+            tr("A PMTiles file with PNG, JPEG or WebP tiles for your region makes the map work with no network. Vector files are not drawn."),
+        ),
+    }
     hint(ui, t, tr("Map credits: satellite © Esri, Maxar, Earthstar Geographics; plain map © OpenStreetMap contributors, © CARTO."));
     hint(ui, t, tr("Without a key the plain map comes from OpenStreetMap. A free key is given at carto.com/basemaps/apikey."));
 }

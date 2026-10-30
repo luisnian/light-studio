@@ -122,10 +122,10 @@ impl Runtime {
 
     /// The credit the tiles in use must show (the satellite view has Esri's; the plain map, its source's).
     pub fn credit(&self, satellite: bool) -> String {
-        if satellite {
+        if satellite && self.tiles.as_ref().is_none_or(|t| t.source() != map_tiles::Source::Offline) {
             return crate::services::map_tiles::SATELLITE_ATTRIBUTION.to_string();
         }
-        self.tiles.as_ref().map(|t| t.source().attribution().to_string()).unwrap_or_default()
+        self.tiles.as_ref().map(|t| t.attribution()).unwrap_or_default()
     }
 
     /// Forgets the service and its tiles (the source changed).
@@ -247,10 +247,11 @@ pub(crate) fn draw_tiles(
 ) {
     // a new key (or none any more) is another source, so other tiles
     let key = carto_key.trim().to_string();
-    if rt.tiles.is_some() && rt.tiles_key != key {
+    let stamp = format!("{key}\u{1}{}", map_tiles::offline_path());
+    if rt.tiles.is_some() && rt.tiles_key != stamp {
         rt.reset();
     }
-    rt.tiles_key = key.clone();
+    rt.tiles_key = stamp;
     rt.tiles.get_or_insert_with(|| MapTiles::new(Some(key.as_str()).filter(|k| !k.is_empty())));
     rt.receive(ctx, now);
 

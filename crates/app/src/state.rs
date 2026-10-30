@@ -37,12 +37,20 @@ pub struct UiState {
     pub map_satellite: bool,
     /// A CARTO key for the plain map (empty: OpenStreetMap's).
     pub map_carto_key: String,
+    /// A PMTiles map file on this computer, used instead of the network (empty: none).
+    pub map_offline: String,
     pub settings: Settings,
 }
 
 impl Default for UiState {
     fn default() -> Self {
-        UiState { planner: PlannerState::default(), map_satellite: true, map_carto_key: String::new(), settings: Settings::default() }
+        UiState {
+            planner: PlannerState::default(),
+            map_satellite: true,
+            map_carto_key: String::new(),
+            map_offline: String::new(),
+            settings: Settings::default(),
+        }
     }
 }
 
