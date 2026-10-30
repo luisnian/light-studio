@@ -67,6 +67,7 @@ enum Item {
     Core,
     Showers,
     Eclipses,
+    Satellites,
     NightCal,
     Year,
     /// A part of the Line Up card (see `align_card`).
@@ -207,7 +208,7 @@ impl Page<'_> {
         let list: &[Item] = match SKY_TABS.get(chosen).copied().unwrap_or(Tab::Sun) {
             Tab::Sun => &[Item::Now, Item::SunCard, Item::SunCal, Item::SunFacts, Item::Dial],
             Tab::Moon => &[Item::MoonCard, Item::MoonCal, Item::MoonFacts],
-            Tab::Night => &[Item::Core, Item::NightCal, Item::Showers, Item::Year, Item::Eclipses],
+            Tab::Night => &[Item::Core, Item::NightCal, Item::Showers, Item::Year, Item::Eclipses, Item::Satellites],
             _ => &[Item::Year, Item::Core],
         };
         self.flow(ui, st, rt, list);
@@ -287,6 +288,10 @@ impl Page<'_> {
             Item::Eclipses => {
                 subhead(ui, "Eclipses");
                 self.eclipses_card(ui, st, rt);
+            }
+            Item::Satellites => {
+                subhead(ui, "Satellites");
+                self.satellites_card(ui, st, rt);
             }
             Item::NightCal => {
                 subhead(ui, "Night Calendar");

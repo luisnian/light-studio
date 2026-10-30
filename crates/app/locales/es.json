@@ -710,5 +710,15 @@
  "Close the Information": "Cerrar la información",
  "Open the settings": "Abrir los ajustes",
  "Enlarge the map to the whole card": "Ampliar el mapa a toda la tarjeta",
- "Back to the normal size": "Volver al tamaño normal"
+ "Back to the normal size": "Volver al tamaño normal",
+ "Satellites": "Satélites",
+ "The satellite orbits could not be fetched.": "No se pudieron obtener las órbitas de los satélites.",
+ "Working out the satellite passes…": "Calculando las pasadas de satélites…",
+ "No visible pass or transit in the next days.": "Ninguna pasada visible ni tránsito en los próximos días.",
+ "Transits across the Sun and the Moon": "Tránsitos por el Sol y la Luna",
+ "Transit across the": "Tránsito por el",
+ "Passes beside the": "Pasa junto al",
+ "miss": "error",
+ "Orbits from CelesTrak, good for a few days. A transit lasts about a second and its line on the ground is only a few kilometres wide: check it again the day before.": "Órbitas de CelesTrak, válidas unos días. Un tránsito dura cerca de un segundo y su línea en el suelo mide pocos kilómetros de ancho: compruébalo de nuevo el día antes.",
+ "Finding satellite passes": "Buscando pasadas de satélites"
 }

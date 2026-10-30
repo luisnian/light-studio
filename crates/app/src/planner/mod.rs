@@ -29,6 +29,7 @@ mod phone;
 mod places;
 mod plans;
 mod pois;
+mod satellites;
 pub use pois::Gone;
 mod popup;
 mod saved;
@@ -545,6 +546,13 @@ pub struct Runtime {
     /// The cloud forecast for the place of the Find card: the place (rounded), when it was asked, and the answer.
     clouds: Option<((i32, i32), f64, Result<std::sync::Arc<crate::services::forecast::Clouds>, String>)>,
     clouds_pending: bool,
+    /// The satellite section is on screen: orbits are asked for and the passes worked out.
+    sats_wanted: bool,
+    /// The orbits and when they were fetched.
+    sats_orbits: Option<(f64, Result<std::sync::Arc<Vec<crate::services::satellites::Orbit>>, String>)>,
+    /// The passes and transits for a place (rounded) and the hour they were worked out.
+    sats: Option<((i32, i32, i64), std::sync::Arc<satellites::Report>)>,
+    sats_pending: bool,
     /// Run the Find card's search with the conditions just loaded (a saved search was chosen).
     find_load: bool,
     find_reach: Option<((u8, u64, u64, u64, u32), Box<[bool; 360]>)>,
@@ -950,6 +958,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let c = refresh(&app.ui.planner, &mut app.planner, now);
     saved::refresh(app);
     find::ask_clouds(app);
+    satellites::ask(app);
     let obs = observer(&app.ui.planner);
     let minute = cursor_minute(&app.ui.planner, &c, now);
     let at = c.start + minute * 60.0;

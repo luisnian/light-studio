@@ -7,5 +7,6 @@ pub mod locate;
 pub mod map_tiles;
 pub mod pdi_sync;
 pub mod peaks;
+pub mod satellites;
 pub mod terrain;
 pub mod terrain_tiles;
