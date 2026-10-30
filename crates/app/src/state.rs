@@ -27,6 +27,8 @@ pub struct Settings {
     pub red_light: bool,
     /// No blurred map under the cards (a plain translucent glass).
     pub plain_glass: bool,
+    /// No animations: cards and bars appear at once.
+    pub reduce_motion: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -731,5 +731,6 @@
  "Folder with 1 m .asc height files": "Carpeta con ficheros .asc de alturas de 1 m",
  "{n} height files found. Shadows use them within 3 km of a place they fully cover.": "{n} ficheros de alturas encontrados. Las sombras los usan a menos de 3 km de un lugar que cubran por completo.",
  "The fine terrain cannot be used:": "No se puede usar el relieve fino:",
- "Prototype for Gipuzkoa: unzip the 1 km LiDAR height boxes (.asc, ETRS89 UTM 30N, orthometric heights) from b5m.gipuzkoa.eus/lidar into one folder.": "Prototipo para Gipuzkoa: descomprime las cajas LiDAR de 1 km (.asc, ETRS89 UTM 30N, alturas ortométricas) de b5m.gipuzkoa.eus/lidar en una carpeta."
+ "Prototype for Gipuzkoa: unzip the 1 km LiDAR height boxes (.asc, ETRS89 UTM 30N, orthometric heights) from b5m.gipuzkoa.eus/lidar into one folder.": "Prototipo para Gipuzkoa: descomprime las cajas LiDAR de 1 km (.asc, ETRS89 UTM 30N, alturas ortométricas) de b5m.gipuzkoa.eus/lidar en una carpeta.",
+ "Reduce motion (no animations)": "Reducir movimiento (sin animaciones)"
 }

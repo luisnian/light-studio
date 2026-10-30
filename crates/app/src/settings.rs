@@ -70,6 +70,9 @@ fn general(app: &mut App, ui: &mut Ui, t: &Tokens) {
         crate::theme::set_red_light(app.ui.settings.red_light);
         crate::theme::apply(ui.ctx());
     }
+    if ui.checkbox(&mut app.ui.settings.reduce_motion, tr("Reduce motion (no animations)")).changed() {
+        crate::theme::set_reduce_motion(app.ui.settings.reduce_motion);
+    }
     let mut frosted = !app.ui.settings.plain_glass;
     if ui.checkbox(&mut frosted, tr("Frosted glass (blurs the map under the cards)")).changed() {
         app.ui.settings.plain_glass = !frosted;

@@ -102,7 +102,7 @@ const CARD_REST_PLAIN: f32 = 0.9;
 /// eased over a moment.
 pub(super) fn card_opacity(ctx: &egui::Context, id: &str, r: Rect, keep: bool) -> f32 {
     let over = ctx.pointer_hover_pos().is_some_and(|p| r.expand(2.0).contains(p)) || keep;
-    let k = ctx.animate_bool_with_time(egui::Id::new(("planner-card-fade", id)), over, 0.12);
+    let k = ctx.animate_bool_with_time(egui::Id::new(("planner-card-fade", id)), over, crate::theme::motion(0.12));
     let plain = ctx.data(|d| d.get_temp::<bool>(egui::Id::new("planner-plain-map"))).unwrap_or(false);
     let rest = if plain { CARD_REST_PLAIN } else { CARD_REST };
     rest + (1.0 - rest) * k
@@ -173,7 +173,7 @@ impl Page<'_> {
             let near = was > 0.02 && pointer.is_some_and(|p| hull.contains(p));
             let open = over[i] || rt.island_pin == Some(i) || busy || near;
             rt.island_open[i] = open;
-            let a = ctx.animate_bool_with_time(egui::Id::new(("planner-island", i)), open, 0.16);
+            let a = ctx.animate_bool_with_time(egui::Id::new(("planner-island", i)), open, crate::theme::motion(0.16));
             if a <= 0.01 {
                 continue;
             }

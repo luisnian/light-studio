@@ -120,4 +120,13 @@ mod tests {
         assert!(fetch(f64::NAN, 0.0).is_err());
         assert!(url("http://x", 1.0, 2.0).contains("cloud_cover"));
     }
+
+    /// Against the real service: the answer still has the shape this reader expects. Run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore = "needs the network"]
+    fn the_live_service_still_answers_in_the_shape_we_read() {
+        let clouds = fetch(43.3, -2.0).expect("the live forecast");
+        assert!(!clouds.is_empty());
+        assert!(clouds.until().is_some_and(|t| t > 0));
+    }
 }

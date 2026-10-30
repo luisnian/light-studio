@@ -51,6 +51,7 @@ impl App {
         crate::services::fine_terrain::set_folder(&ui.fine_terrain);
         crate::theme::set_red_light(ui.settings.red_light);
         crate::theme::set_frosted(!ui.settings.plain_glass);
+        crate::theme::set_reduce_motion(ui.settings.reduce_motion);
         App {
             ctx,
             ui,

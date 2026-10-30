@@ -340,7 +340,7 @@ const CARDS: [(Card, &str, &str); 5] = [
 /// How far open the central card is (0 = a dot in the middle of the screen, 1 = the whole card), eased; one value for all
 /// the cards, so changing from one to another does not replay the opening.
 pub(super) fn grow(ctx: &egui::Context, open: bool) -> f32 {
-    let k = ctx.animate_bool_with_time(egui::Id::new("planner-card-grow"), open, 0.28);
+    let k = ctx.animate_bool_with_time(egui::Id::new("planner-card-grow"), open, crate::theme::motion(0.28));
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("planner-card-grow-k"), k));
     k
 }

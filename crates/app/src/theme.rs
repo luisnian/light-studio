@@ -80,6 +80,18 @@ fn paint_blurred_backdrop(p: &Painter, r: Rect, k: f32) {
     }
 }
 
+static REDUCE_MOTION: AtomicBool = AtomicBool::new(false);
+
+/// Turns the animations off (cards and bars appear at once).
+pub fn set_reduce_motion(on: bool) {
+    REDUCE_MOTION.store(on, Ordering::Relaxed);
+}
+
+/// An animation's length in seconds: zero when motion is reduced.
+pub fn motion(secs: f32) -> f32 {
+    if REDUCE_MOTION.load(Ordering::Relaxed) { 0.0 } else { secs }
+}
+
 /// The family text of a heavier weight is set in (see [`install_fonts`]).
 const SEMIBOLD: &str = "semibold";
 
@@ -189,7 +201,7 @@ impl Tokens {
             hover: r(52),
             tool_active: r(120),
             accent: r(255),
-            text: r(236),
+            text: r(255),
             text_dim: r(170),
             text_label: r(200),
             text_disabled: r(104),
@@ -302,7 +314,7 @@ pub fn paint_chip_at(p: &Painter, r: Rect, t: &Tokens, k: f32) {
 /// The graphite glass of cards and menus: a dark grey (a light grey in the light look) that lets the map show through.
 fn glass(t: &Tokens, alpha: u8) -> Color32 {
     if red_light() {
-        Color32::from_rgba_unmultiplied(30, 0, 0, alpha)
+        Color32::from_rgba_unmultiplied(30, 0, 0, alpha.max(244))
     } else if t.dark {
         Color32::from_rgba_unmultiplied(36, 36, 39, alpha)
     } else {
@@ -392,6 +404,50 @@ mod tests {
         let (with, without) = (count(true), count(false));
         set_frosted(true);
         assert_eq!(with - without, 1 + BLUR_TAPS, "{with} {without}");
+    }
+
+    /// WCAG contrast ratio of two opaque colours.
+    fn contrast(a: Color32, b: Color32) -> f32 {
+        let lin = |c: u8| {
+            let v = f32::from(c) / 255.0;
+            if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+        };
+        let l = |c: Color32| 0.2126 * lin(c.r()) + 0.7152 * lin(c.g()) + 0.0722 * lin(c.b());
+        let (x, y) = (l(a) + 0.05, l(b) + 0.05);
+        x.max(y) / x.min(y)
+    }
+
+    /// `over` seen through the glass `g` (translucent) with the map `map` behind it.
+    fn through(g: Color32, map: Color32) -> Color32 {
+        let a = f32::from(g.a()) / 255.0;
+        let mix = |t: u8, m: u8| (f32::from(t) * a + f32::from(m) * (1.0 - a)).round() as u8;
+        Color32::from_rgb(mix(g.r(), map.r()), mix(g.g(), map.g()), mix(g.b(), map.b()))
+    }
+
+    #[test]
+    fn text_on_the_glass_stays_readable_over_the_brightest_and_darkest_map() {
+        set_red_light(false);
+        // (Light Studio is always dark: the light tokens are not drawn over the map)
+        for (t, name) in [(Tokens::dark(), "dark")] {
+            for alpha in [196u8, 226] {
+                let g = glass(&t, alpha);
+                for map in [Color32::WHITE, Color32::BLACK] {
+                    let bg = through(g, map);
+                    assert!(contrast(t.text, bg) >= 4.5, "{name} text, alpha {alpha}, map {map:?}: {}", contrast(t.text, bg));
+                    assert!(contrast(t.text_dim, bg) >= 3.0, "{name} dim text, alpha {alpha}, map {map:?}: {}", contrast(t.text_dim, bg));
+                }
+            }
+        }
+        set_red_light(true);
+        let t = Tokens::red();
+        for alpha in [196u8, 226] {
+            for map in [Color32::from_rgb(255, 40, 30), Color32::BLACK] {
+                let bg = through(glass(&t, alpha), map);
+                // pure red is dark to the eye: 4:1 is the most it reaches, and the price of keeping night vision
+                assert!(contrast(t.text, bg) >= 4.0, "red text, alpha {alpha}: {}", contrast(t.text, bg));
+            }
+        }
+        set_red_light(false);
     }
 
     #[test]

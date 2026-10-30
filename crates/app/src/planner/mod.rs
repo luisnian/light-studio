@@ -1057,8 +1057,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         let zone = prev.expand2(vec2(6.0, 8.0)).union(compact.expand2(vec2(8.0, 8.0)));
         let over = ctx.pointer_hover_pos().is_some_and(|q| zone.contains(q))
             || ctx.input(|i| i.pointer.any_down() && i.pointer.press_origin().is_some_and(|q| zone.contains(q)));
-        let a = ctx.animate_bool_with_time(egui::Id::new("planner-time-open"), over, 0.2);
-        let w = ctx.animate_bool_with_time(egui::Id::new("planner-time-wide"), st.time_wide, 0.2);
+        let a = ctx.animate_bool_with_time(egui::Id::new("planner-time-open"), over, crate::theme::motion(0.2));
+        let w = ctx.animate_bool_with_time(egui::Id::new("planner-time-wide"), st.time_wide, crate::theme::motion(0.2));
         let ease = |x: f32| x * x * (3.0 - 2.0 * x);
         let target = layout::lerp_rect(normal, wide, ease(w));
         areas.time = layout::lerp_rect(compact, target, ease(a));
