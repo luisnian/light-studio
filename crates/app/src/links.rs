@@ -17,10 +17,6 @@ pub fn open(url: &str) -> Result<(), String> {
         let mut c = Command::new("open");
         c.arg(url);
         c
-    } else if cfg!(windows) {
-        let mut c = Command::new("rundll32");
-        c.arg("url.dll,FileProtocolHandler").arg(url);
-        c
     } else {
         let mut c = Command::new("xdg-open");
         c.arg(url);

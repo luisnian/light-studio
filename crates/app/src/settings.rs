@@ -180,7 +180,7 @@ fn phone(app: &mut App, ui: &mut Ui, t: &Tokens) {
         }
     });
     if !pdi_sync::SUPPORTED {
-        hint(ui, t, tr("The key can only be kept on the Mac or on Windows. On other systems, set it with the LIGHT_STUDIO_PDI_KEY variable."));
+        hint(ui, t, tr("The key can only be kept on the Mac. On other systems, set it with the LIGHT_STUDIO_PDI_KEY variable."));
     }
     if let Some(k) = app.pdi_new_key.clone() {
         row(ui, t, "New key", |ui| {
@@ -328,7 +328,7 @@ fn phone_app(app: &mut App, ui: &mut Ui, t: &Tokens) {
         "• Light Studio picks it up when it opens and every few minutes (or press Sync Now, or the cloud button on the map).",
         "• It goes both ways: points made or edited here appear on the phone, and deleting on one side deletes on the other.",
         "• If both sides change the same point, the phone's copy is kept and yours is saved as “(conflict)”.",
-        "• The key stays in the Mac's keychain (on Windows, encrypted for your user), never in a plain file. To change it, generate a new one and set it in the Worker and the phone.",
+        "• The key stays in the Mac's keychain never in a plain file. To change it, generate a new one and set it in the Worker and the phone.",
     ] {
         hint(ui, t, tr(line));
     }

@@ -1,8 +1,5 @@
 //! Light Studio: opens its window on the planner.
 
-// on Windows: a window app, without a console behind it
-#![cfg_attr(windows, windows_subsystem = "windows")]
-
 use light_studio::{App, state::UiState, theme};
 
 fn main() -> eframe::Result {

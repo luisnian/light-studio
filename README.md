@@ -47,6 +47,22 @@ Requiere Rust 1.90 o superior. Solo para macOS.
 `LIGHT_STUDIO_CONFIG_DIR`, `LIGHT_STUDIO_MAP_TILES`, `LIGHT_STUDIO_ELEVATION_URL`, `LIGHT_STUDIO_GEOCODE_URL`,
 `LIGHT_STUDIO_TERRAIN_URL`, `LIGHT_STUDIO_OVERPASS_URL`, `LIGHT_STUDIO_PDI_KEY`.
 
+## Servicios y datos de terceros
+
+Light Studio consulta servicios públicos gratuitos, con sus límites de uso: si lo usas mucho, pueden limitarte o
+bloquearte. Puedes sustituirlos con las variables de entorno de abajo.
+
+- Mapas: © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL), CARTO, y Esri World Imagery para el satélite.
+- Contaminación lumínica: atlas de David Lorenz ([djlorenz.github.io/astronomy](https://djlorenz.github.io/astronomy/)).
+- Relieve: Terrarium (Mapzen / AWS Open Data) y Open Topo Data; opcionalmente LiDAR de 1 m del b5m (Gipuzkoa) que descargas tú.
+- Búsqueda de lugares: Nominatim y Photon; puntos de interés: Overpass.
+- Tiempo: Open-Meteo. Órbitas de satélites: [CelesTrak](https://celestrak.org/).
+- Localización aproximada por IP (opcional): ipwho.is e ipapi.co, que reciben tu dirección IP.
+- Zonas horarias: [timezone-boundary-builder](https://github.com/evansiroky/timezone-boundary-builder) (ODbL) a través de `tzf-rs`, y la base de datos IANA.
+
+Los datos conservan las licencias y los términos de sus autores. El icono y el logo son obra original de Luis Nieto.
+Detalles en [NOTICE](NOTICE).
+
 ## Licencia
 
 MIT © Luis Nieto. Ver [LICENSE](LICENSE).

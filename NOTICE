@@ -1,0 +1,22 @@
+Light Studio — avisos de terceros
+
+El código de Light Studio es MIT © 2026 Luis Nieto (ver LICENSE). El icono y el logo (assets/) son obra original de
+Luis Nieto y se publican bajo la misma licencia MIT.
+
+Datos y servicios que usa la aplicación (no se incluyen en este repositorio, salvo lo indicado):
+
+- OpenStreetMap: © OpenStreetMap contributors, Open Database License 1.0. https://www.openstreetmap.org/copyright
+- Esri World Imagery y capa de nombres: © Esri y sus proveedores; se usan con atribución visible en el mapa.
+- CARTO basemaps: © CARTO, datos © OpenStreetMap contributors.
+- Atlas de contaminación lumínica: David J. Lorenz, https://djlorenz.github.io/astronomy/
+- Elevación: Terrarium tiles (Mapzen, AWS Open Data Terrain Tiles) y Open Topo Data.
+- Terreno fino opcional: LiDAR del b5m, Diputación Foral de Gipuzkoa (el usuario descarga los archivos y debe
+  respetar su licencia: https://b5m.gipuzkoa.eus).
+- Zonas horarias: timezone-boundary-builder (Evan Siroky), ODbL 1.0, incluido en el crate `tzf-dist`
+  (MIT AND ODbL-1.0). La base de datos horaria viene de `chrono-tz` (IANA).
+- Órbitas de satélites: CelesTrak (https://celestrak.org/).
+- Tiempo: Open-Meteo (https://open-meteo.com/), uso no comercial.
+- Geocodificación y puntos de interés: Nominatim, Photon (Komoot), Overpass.
+- Localización por IP (opcional): ipwho.is, ipapi.co.
+
+Las dependencias de Rust conservan sus licencias (MIT, Apache-2.0, Unicode-3.0, Zlib, ISC, BSL-1.0 y similares).

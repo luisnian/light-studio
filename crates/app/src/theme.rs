@@ -249,11 +249,7 @@ pub fn install_fonts(ctx: &Context) {
 }
 
 fn system_bold_faces() -> &'static [(&'static str, &'static str)] {
-    &[
-        ("system-bold", "/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
-        ("system-bold", "C:\\Windows\\Fonts\\segoeuib.ttf"),
-        ("system-bold", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
-    ]
+    &[("system-bold", "/System/Library/Fonts/Supplemental/Arial Bold.ttf"), ("system-bold", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")]
 }
 
 /// The egui visuals made from the tokens.
