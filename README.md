@@ -40,7 +40,7 @@ cargo test
 
 Genera `dist/Light-Studio-<versión>.dmg` (firma ad hoc; la primera vez, clic derecho ▸ Abrir).
 
-Requiere Rust 1.90 o superior. Funciona en macOS y Linux (wgpu).
+Requiere Rust 1.90 o superior. Solo para macOS.
 
 ## Variables de entorno (opcionales)
 
