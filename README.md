@@ -8,13 +8,21 @@ horizonte de montañas, alineaciones y puntos de interés sincronizables con el 
 
 ## Qué incluye
 
-- **Planificador**: salida/puesta del Sol y la Luna, horas dorada y azul, ventana de la Vía Láctea, calendario del cielo y vista anual.
-- **Mapa**: mapa o satélite, contaminación lumínica, sombras, horizonte, herramienta de cámara (campo de visión y profundidad de campo).
-- **Búsqueda de alineaciones** (Sol/Luna/núcleo galáctico con un punto del terreno) y eclipses.
+- **Planificador**: salida/puesta del Sol y la Luna, horas dorada y azul, ventana de la Vía Láctea, calendario del cielo y vista anual. La zona horaria y el horario de verano se resuelven sin conexión para cualquier lugar del mundo.
+- **Mapa**: mapa o satélite, contaminación lumínica, sombras del terreno, horizonte de montañas, herramienta de cámara (campo de visión y profundidad de campo) y cristal esmerilado bajo las tarjetas.
+- **Mapa sin conexión**: usa un archivo PMTiles ráster (Ajustes ▸ Mapa) cuando no hay red.
+- **Relieve fino (prototipo)**: carpeta de LiDAR de 1 m (.asc, ETRS89 UTM 30N) para afinar las sombras en Gipuzkoa; fuera de la zona cubierta se usa el relieve global.
+- **Satélites**: pasadas visibles de la ISS y otras estaciones espaciales (órbitas de CelesTrak) y tránsitos por el Sol y la Luna con su duración, en la pestaña Noche.
+- **Búsqueda de alineaciones** (Sol/Luna/núcleo galáctico con un punto del terreno) y **eclipses**, validados al minuto con el eclipse total del 2 de agosto de 2027.
 - **Cálculos**: exposición, NPF, time-lapse, filtros ND, trazas de estrellas.
 - **Planes y puntos de interés** guardados, con exportación a Calendario (macOS) y sincronización con la app web del móvil (PDI).
+- **Modo luz roja** para conservar la visión nocturna en el campo, y opción de reducir el movimiento.
 - Interfaz en español e inglés.
-- Crate `light-studio-astro`: astronomía propia (efemérides, tiempo, refracción, eclipses), sin dependencias externas.
+- Crate `light-studio-astro`: astronomía propia (teoría lunar de Meeus, ΔT, paralaje topocéntrica, refracción, eclipses), sin dependencias externas.
+
+## Web
+
+[lightstudio.luisnietofoto.com](https://lightstudio.luisnietofoto.com)
 
 ## Compilar
 
@@ -32,19 +40,7 @@ cargo test
 
 Genera `dist/Light-Studio-<versión>.dmg` (firma ad hoc; la primera vez, clic derecho ▸ Abrir).
 
-### Instalador para Windows
-
-En PowerShell, con Rust, Visual Studio Build Tools (C++) e [Inno Setup 6](https://jrsoftware.org/isdl.php):
-
-```powershell
-.\scripts\make-installer.ps1
-```
-
-Genera `dist\Light-Studio-<versión>-setup.exe`. También se construye solo en GitHub:
-pestaña *Actions* ▸ *Windows installer* ▸ *Run workflow*, y el instalador se descarga como artefacto.
-En Windows la clave PDI se lee de `LIGHT_STUDIO_PDI_KEY` (no hay llavero).
-
-Requiere Rust 1.90 o superior. Funciona en macOS, Linux y Windows (wgpu).
+Requiere Rust 1.90 o superior. Funciona en macOS y Linux (wgpu).
 
 ## Variables de entorno (opcionales)
 
