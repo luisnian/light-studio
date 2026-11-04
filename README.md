@@ -16,7 +16,7 @@ horizonte de montañas, alineaciones y puntos de interés sincronizables con el 
 - **Búsqueda de alineaciones** (Sol/Luna/núcleo galáctico con un punto del terreno) y **eclipses**, validados al minuto con el eclipse total del 2 de agosto de 2027.
 - **Cálculos**: exposición, NPF, time-lapse, filtros ND, trazas de estrellas.
 - **Planes y puntos de interés** guardados, con exportación a Calendario (macOS) y sincronización con la app web del móvil (PDI).
-  La sincronización necesita tu propio Worker de Cloudflare con la app web PDI; la dirección (por defecto `https://pdi.example.com`) y la clave se ponen en Ajustes.
+  La sincronización necesita tu propio Worker de Cloudflare; la app web del móvil está en [`pdi/`](pdi/) (ver su README). La dirección (por defecto `https://pdi.example.com`) y la clave se ponen en Ajustes.
 - **Modo luz roja** para conservar la visión nocturna en el campo, y opción de reducir el movimiento.
 - Interfaz en español e inglés.
 - Crate `light-studio-astro`: astronomía propia (teoría lunar de Meeus, ΔT, paralaje topocéntrica, refracción, eclipses), sin dependencias externas.

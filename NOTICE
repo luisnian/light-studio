@@ -19,4 +19,7 @@ Datos y servicios que usa la aplicación (no se incluyen en este repositorio, sa
 - Geocodificación y puntos de interés: Nominatim, Photon (Komoot), Overpass.
 - Localización por IP (opcional): ipwho.is, ipapi.co.
 
+- Leaflet 1.9.4 (pdi/web/vendor): © Vladimir Agafonkin, BSD-2-Clause. https://leafletjs.com/
+- Imágenes del mapa del móvil: Esri, Maxar, Earthstar Geographics; © OpenStreetMap contributors.
+
 Las dependencias de Rust conservan sus licencias (MIT, Apache-2.0, Unicode-3.0, Zlib, ISC, BSL-1.0 y similares).

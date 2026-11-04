@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#ffffff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="PDI">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="icons/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="stylesheet" href="style.css">
+<title>RawStudioPDI</title>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="aperture" viewBox="0 0 32 32">
+    <circle cx="16" cy="16" r="14.2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M16 1.8 9.6 12.9"/><path d="M27.4 8.9 14.6 8.9"/><path d="M27.4 23.1 21 12"/>
+      <path d="M16 30.2 22.4 19.1"/><path d="M4.6 23.1 17.4 23.1"/><path d="M4.6 8.9 11 20"/>
+    </g>
+  </symbol>
+</svg>
+<header>
+  <h1 class="brand" aria-label="RAW Studio"><svg viewBox="0 0 32 32" aria-hidden="true"><use href="#aperture"/></svg><span>RAW <b>Studio</b></span></h1>
+  <button id="syncBtn" class="cloud" type="button" aria-label="Sincronizar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.24 17.76 3.36 14.88 4.8 11.04 8.64 10.56 10.08 7.2 13.92 6.24 16.8 9.12 20.16 11.52 21.12 14.88 17.28 17.76Z"/></svg><b id="syncN" hidden></b></button>
+  <button id="cfgBtn" class="icon" type="button" aria-label="Ajustes">⚙︎</button>
+</header>
+
+<div id="pairBanner" class="glass" hidden>
+  <p>Para terminar: pulsa <b>Compartir ▸ Añadir a pantalla de inicio</b> y abre la app. Se vinculará sola.</p>
+  <button type="button" id="pairHere" class="mini">Vincular solo en Safari</button>
+</div>
+
+<main>
+  <section id="viewMap" class="view active">
+    <div id="map"></div>
+    <div id="mapOff" class="hint" hidden>Mapa no disponible sin conexión. Los puntos se guardan igualmente.</div>
+    <div id="gps" class="gps">Buscando GPS…</div>
+  </section>
+  <section id="viewList" class="view"><ul id="list"></ul><p id="empty" class="hint" hidden>Aún no hay PDI. Pulsa «Guardar aquí».</p></section>
+</main>
+
+<nav class="bar">
+  <button data-view="viewMap" class="tab active" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 3 6.5v13L9 17l6 2.5 6-2.5v-13L15 6.5 9 4Zm0 0v13m6-10.5v13"/></svg><span>Mapa</span></button>
+  <button id="quick" class="fab" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-7-6.1-7-11.2A7 7 0 0 1 19 9.8C19 14.9 12 21 12 21Z"/><circle cx="12" cy="9.8" r="2.4"/></svg><span>Guardar aquí</span></button>
+  <button data-view="viewList" class="tab" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg><span>Lista <span id="count"></span></span></button>
+</nav>
+
+<dialog id="sheet">
+  <form method="dialog" id="form">
+    <div class="sheetbody">
+      <label>Nombre <input id="fName" maxlength="120" required autocomplete="off"></label>
+      <label>Descripción <textarea id="fDesc" rows="3" maxlength="2000"></textarea></label>
+      <div class="row">
+        <label>Categoría
+          <select id="fCat"><option value="otro">Otro</option><option value="arbol">Árbol</option><option value="costa">Costa</option><option value="cascada">Cascada</option><option value="mirador">Mirador</option></select>
+        </label>
+        <label>Estado
+          <select id="fStatus"><option value="want">Quiero ir</option><option value="visited">Visitado</option></select>
+        </label>
+      </div>
+      <label>Mejor momento <input id="fBest" maxlength="200" placeholder="Amanecer en marzo"></label>
+      <label>Notas <textarea id="fNotes" rows="2" maxlength="2000" placeholder="Acceso, encuadre, permisos…"></textarea></label>
+      <p id="fCoord" class="hint"></p>
+      <div class="row posbtns">
+        <button type="button" id="fAdjust" class="mini">⌖ Ajustar posición</button>
+        <button type="button" id="fPhotoPos" class="mini" hidden></button>
+      </div>
+      <div id="fPhotos" class="photos"></div>
+      <label class="file">＋ Añadir foto (fototeca o cámara) <input id="fFile" type="file" accept="image/*" multiple hidden></label>
+    </div>
+    <nav class="bar sheetbar">
+      <button type="button" id="fDel" class="tab danger"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 12h10l1-12M9 7V4h6v3"/></svg><span>Borrar</span></button>
+      <a id="fGo" class="tab" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 20l8-4 8 4-8-17Z"/></svg><span>Llegar</span></a>
+      <button type="button" id="fCancel" class="tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Cerrar</span></button>
+      <button type="submit" id="fSave" class="fab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><span>Guardar</span></button>
+    </nav>
+  </form>
+</dialog>
+
+<dialog id="adjust">
+  <div id="amap"></div>
+  <div id="cross" aria-hidden="true"></div>
+  <div id="aInfo" class="glass"><b id="aCoord"></b><small id="aDelta"></small></div>
+  <div id="pad" class="glass">
+    <span></span><button type="button" data-d="n" aria-label="Norte">▲</button><span></span>
+    <button type="button" data-d="w" aria-label="Oeste">◀</button><button type="button" id="aStep" aria-label="Paso">1 m</button><button type="button" data-d="e" aria-label="Este">▶</button>
+    <span></span><button type="button" data-d="s" aria-label="Sur">▼</button><span></span>
+  </div>
+  <nav class="bar">
+    <button type="button" id="aCancel" class="tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Cancelar</span></button>
+    <button type="button" id="aGps" class="tab"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v4m0 10v4M3 12h4m10 0h4"/></svg><span>Mi GPS</span></button>
+    <button type="button" id="aOk" class="fab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><span>Usar esta posición</span></button>
+  </nav>
+</dialog>
+
+<dialog id="cfg">
+  <form method="dialog" id="cfgForm">
+    <h2>Ajustes</h2>
+    <p id="cfgState" class="hint"></p>
+    <button type="button" id="layerBtn" class="primary" style="width:100%">Mapa</button>
+    <button type="button" id="faceBtn" class="primary" hidden>Activar Face ID</button>
+    <label>Código de emparejado <input id="cCode" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12" placeholder="El de RAW Studio en el Mac"></label>
+    <button type="button" id="pairBtn" class="primary">Vincular este móvil</button>
+    <p class="hint" style="font-size:11px">Imágenes: Esri, Maxar, Earthstar Geographics · Mapa: Leaflet</p>
+    <details class="alt">
+      <summary>Entrar con la clave maestra</summary>
+      <label>Clave de acceso <input id="cKey" type="password" autocomplete="off" placeholder="La clave del Worker"></label>
+      <button type="submit" class="primary">Entrar</button>
+      <p class="hint">La clave se usa una vez para obtener una sesión de 30 días; no se guarda.</p>
+    </details>
+    <div class="row buttons"><button type="button" id="cClose">Cerrar</button></div>
+  </form>
+</dialog>
+
+<div id="lock"><div class="lockbox"><span class="appicon" aria-hidden="true"><svg viewBox="0 0 32 32"><use href="#aperture"/></svg></span><h2>RAW <b>Studio</b></h2>
+  <button id="unlockBtn" class="primary big" type="button">Desbloquear con Face ID</button>
+  <p id="lockMsg" class="hint"></p><button id="keyBtn" class="link" type="button">Usar la clave</button></div></div>
+<div id="toast" role="status" hidden></div>
+<script src="vendor/leaflet.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
