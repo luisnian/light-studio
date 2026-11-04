@@ -167,7 +167,7 @@ mod tests {
                     (_, "/api/v1/health") => (200, r#"{"ok":true}"#.to_string()),
                     ("POST", "/api/v1/pair") => (
                         code_status,
-                        r#"{"code":"BZTY-TV5G","expires_at":"2026-10-25T11:24:36.390Z","link":"https://pdi.example/#pair=BZTYTV5G"}"#.to_string(),
+                        r#"{"code":"ABCD-EFGH","expires_at":"2026-10-25T11:24:36.390Z","link":"https://pdi.example.com/#pair=ABCDEFGH"}"#.to_string(),
                     ),
                     ("GET", "/api/v1/devices") => (
                         200,
@@ -215,7 +215,7 @@ mod tests {
         start_with(&mut h.app, Job::Code, Arc::new(Fixed(Some("a-long-enough-key".into()))));
         wait(&mut h);
         let (code, _) = h.app.pdi_pair.code.clone().expect("a code");
-        assert_eq!(code.code, "BZTY-TV5G");
+        assert_eq!(code.code, "ABCD-EFGH");
         assert!(h.app.pdi_pair.left(h.app.pdi_pair.code.as_ref().unwrap().1 + 5.0).is_some_and(|s| s > 590.0));
         assert!(h.app.pdi_pair.left(h.app.pdi_pair.code.as_ref().unwrap().1 + 601.0).is_none(), "the code lapses");
         // asking for the code was followed by the list

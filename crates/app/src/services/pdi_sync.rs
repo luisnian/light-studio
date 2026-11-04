@@ -25,7 +25,7 @@ pub struct PdiConfig {
 
 impl Default for PdiConfig {
     fn default() -> Self {
-        PdiConfig { enabled: true, url: "https://pdi.luisnietofoto.com".into() }
+        PdiConfig { enabled: true, url: "https://pdi.example.com".into() }
     }
 }
 
@@ -312,7 +312,7 @@ pub fn generate_key() -> Result<String, String> {
 /// A one-use code to link a phone, as the Worker gives it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PairCode {
-    /// Eight characters in two groups, `BZTY-TV5G`.
+    /// Eight characters in two groups, `ABCD-EFGH`.
     pub code: String,
     pub expires_at: String,
     /// The address that links the browser it is opened in (not the installed app: there the code is typed).
@@ -567,12 +567,12 @@ mod tests {
             vec![(
                 "/api/v1/pair",
                 201,
-                r#"{"code":"BZTY-TV5G","expires_at":"2026-10-25T11:24:36.390Z","link":"https://pdi.example.com/#pair=BZTYTV5G"}"#,
+                r#"{"code":"ABCD-EFGH","expires_at":"2026-10-25T11:24:36.390Z","link":"https://pdi.example.com/#pair=ABCDEFGH"}"#,
             )],
             Default::default(),
         );
         let c = request_code(&w, "/api/v1").unwrap();
-        assert_eq!((c.code.as_str(), c.link.as_str()), ("BZTY-TV5G", "https://pdi.example.com/#pair=BZTYTV5G"));
+        assert_eq!((c.code.as_str(), c.link.as_str()), ("ABCD-EFGH", "https://pdi.example.com/#pair=ABCDEFGH"));
         // a phone's key is refused, a wrong answer is an error and not a panic
         let w = Canned(vec![("/api/v1/pair", 403, r#"{"error":"forbidden"}"#)], Default::default());
         assert!(request_code(&w, "/api/v1").unwrap_err().contains("main key"));
