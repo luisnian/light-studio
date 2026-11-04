@@ -375,7 +375,7 @@ fn cache_path(shared: &Shared, k: TileKey) -> Option<PathBuf> {
 /// lighter for the light style; for the dark one, land and roads dark grey, water darker, labels
 /// light, colour almost gone.
 pub fn tone(t: &mut Tile, style: MapStyle) {
-    for px in t.rgba.chunks_exact_mut(4) {
+    for px in t.rgba.as_chunks_mut::<4>().0.iter_mut() {
         let [r, g, b] = [f32::from(px[0]), f32::from(px[1]), f32::from(px[2])];
         let l = 0.299 * r + 0.587 * g + 0.114 * b;
         let out = match style {

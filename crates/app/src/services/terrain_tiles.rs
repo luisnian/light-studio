@@ -54,7 +54,7 @@ pub fn heights_of(rgba: &[u8], width: usize, height: usize) -> Option<Vec<f32>> 
     if width != TILE || height != TILE || rgba.len() != width * height * 4 {
         return None;
     }
-    Some(rgba.chunks_exact(4).map(|p| (f32::from(p[0]) * 256.0 + f32::from(p[1]) + f32::from(p[2]) / 256.0 - 32_768.0).max(0.0)).collect())
+    Some(rgba.as_chunks::<4>().0.iter().map(|p| (f32::from(p[0]) * 256.0 + f32::from(p[1]) + f32::from(p[2]) / 256.0 - 32_768.0).max(0.0)).collect())
 }
 
 /// The ground within `radius_m` of the place (a little more: whole tiles); needs the network unless the tiles were
