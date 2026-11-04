@@ -25,6 +25,11 @@ horizonte de montañas, alineaciones y puntos de interés sincronizables con el 
 
 [lightstudio.luisnietofoto.com](https://lightstudio.luisnietofoto.com)
 
+## Descargar
+
+Descarga el `.dmg` de la última [versión](https://github.com/luisnian/light-studio/releases/latest), ábrelo y arrastra
+Light Studio a Aplicaciones. La app no está notarizada: la primera vez, clic derecho ▸ Abrir.
+
 ## Compilar
 
 ```sh
