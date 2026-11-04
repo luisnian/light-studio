@@ -1,4 +1,4 @@
-// RawStudioPDI · PWA móvil. Local primero (IndexedDB); sincroniza con el Worker cuando hay cobertura.
+// Light Studio PDI · PWA móvil. Local primero (IndexedDB); sincroniza con el Worker cuando hay cobertura.
 const API = '/api/v1';
 const $ = (id) => document.getElementById(id);
 const uuid = () => crypto.randomUUID();
@@ -407,7 +407,7 @@ async function sync(quiet = false) {
 async function openCfg() {
   const t = await metaGet('token'), last = await metaGet('last_sync');
   const paired = !!(await metaGet('devkey'));
-  $('cfgState').textContent = (t ? (paired ? 'Móvil vinculado.' : 'Sesión iniciada.') : 'Sin vincular: los PDI se guardan en el teléfono pero no se envían. Escribe el código de RAW Studio.') + (last ? ` Última sincronización: ${new Date(last).toLocaleString('es')}.` : '');
+  $('cfgState').textContent = (t ? (paired ? 'Móvil vinculado.' : 'Sesión iniciada.') : 'Sin vincular: los PDI se guardan en el teléfono pero no se envían. Escribe el código de Light Studio.') + (last ? ` Última sincronización: ${new Date(last).toLocaleString('es')}.` : '');
   const face = !!(await metaGet('cred'));
   $('cfgState').textContent += face ? ' Face ID: activado.' : ' Face ID: sin activar.';
   $('faceBtn').hidden = face || !t;
@@ -490,7 +490,7 @@ $('keyBtn').onclick = async () => { // salida de emergencia: la clave maestra qu
 };
 $('faceBtn').onclick = enableFaceId;
 
-// ---------- Emparejado: el código de RAW Studio se canjea por una clave propia de este móvil ----------
+// ---------- Emparejado: el código de Light Studio se canjea por una clave propia de este móvil ----------
 async function claimPair(raw) {
   const code = String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (code.length !== 8) { toast('El código tiene 8 caracteres'); return false; }

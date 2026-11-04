@@ -1,4 +1,4 @@
-# PDI — RawStudioPDI
+# PDI — Light Studio PDI
 
 PWA para apuntar puntos de interés fotográficos con el iPhone, también sin cobertura, y llevarlos a Light Studio.
 Worker de Cloudflare con **D1** (registro y cursor) + **R2** (fotos). El Worker sirve también la PWA.

@@ -112,7 +112,7 @@ test('adjuntos: subir (reintento seguro), citar, descargar; tipo y tamaño contr
 
 test('la PWA se sirve desde el mismo Worker', async () => {
   const r = await fetch(`${BASE}/index.html`);
-  assert.equal(r.status, 200); assert.match(await r.text(), /RawStudioPDI/);
+  assert.equal(r.status, 200); assert.match(await r.text(), /Light Studio PDI/);
 });
 
 // ---------- Passkeys (Face ID) con un autenticador simulado ----------

@@ -1,4 +1,4 @@
-// RawStudioPDI · Worker de Cloudflare (API v1)
+// Light Studio PDI · Worker de Cloudflare (API v1)
 // D1 = registro de PDI y cursor · R2 = fotos/adjuntos. Sin dependencias.
 
 const SCHEMA_VERSION = 1;
@@ -329,7 +329,7 @@ async function passkeyRegisterOptions(request, env) {
   const url = new URL(request.url);
   return json({
     challenge: await newChallenge(env, 'register'),
-    rp: { id: url.hostname, name: 'RawStudioPDI' },
+    rp: { id: url.hostname, name: 'Light Studio PDI' },
     user: { id: b64url(enc.encode('luis')), name: 'luis', displayName: 'Luis' },
   });
 }
@@ -420,7 +420,7 @@ function dynamicManifest(url) {
   const code = normCode(url.searchParams.get('pair'));
   const start = code.length === 8 ? `/?pair=${code}` : '/';
   return new Response(JSON.stringify({
-    id: '/', name: 'RawStudioPDI', short_name: 'PDI', description: 'Puntos de interés fotográficos, también sin cobertura', lang: 'es',
+    id: '/', name: 'Light Studio PDI', short_name: 'PDI', description: 'Puntos de interés fotográficos, también sin cobertura', lang: 'es',
     start_url: start, scope: '/', display: 'standalone', orientation: 'portrait', background_color: '#ffffff', theme_color: '#ffffff',
     icons: [
       { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },

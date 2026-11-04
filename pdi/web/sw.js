@@ -1,5 +1,5 @@
 // Service worker: la app abre sin cobertura. Nunca cachea la API.
-const SHELL = 'pdi-shell-v19';
+const SHELL = 'pdi-shell-v20';
 const TILES = 'pdi-tiles-v2';
 const MAX_TILES = 1500;
 const FILES = ['./', 'index.html', 'app.js', 'style.css', 'manifest.webmanifest', 'vendor/leaflet.js', 'vendor/leaflet.css',

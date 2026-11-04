@@ -1,4 +1,4 @@
--- RawStudioPDI · esquema D1 (v1)
+-- Light Studio PDI · esquema D1 (v1)
 -- Aplicar: wrangler d1 execute rawstudiopdi --remote --file=schema.sql
 
 CREATE TABLE IF NOT EXISTS pois (
