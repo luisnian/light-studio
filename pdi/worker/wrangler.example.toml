@@ -1,0 +1,23 @@
+# Copia este archivo a wrangler.toml (que no se sube al repositorio) y pon tus propios valores.
+name = "rawstudiopdi"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+# La PWA se sirve desde el propio Worker (carpeta ../web)
+[assets]
+directory = "../web"
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "rawstudiopdi"
+database_id = "TU-DATABASE-ID"   # lo imprime `wrangler d1 create rawstudiopdi`
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "rawstudiopdi-files"
+
+# Secretos (no van en este archivo):
+#   wrangler secret put API_KEY        -> clave larga; la usa Light Studio (llavero) y la PWA al iniciar sesión
+#   wrangler secret put SESSION_SECRET -> cadena aleatoria para firmar las sesiones de la PWA

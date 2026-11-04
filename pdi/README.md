@@ -1,41 +1,63 @@
-# PDI — app web del móvil
+# PDI — RawStudioPDI
 
-PWA para anotar puntos de interés fotográficos (PDI) desde el móvil, también sin cobertura, y sincronizarlos con
-Light Studio. Versión 0.8.1. HTML, CSS y JavaScript sin dependencias de compilación; el mapa usa
-[Leaflet](https://leafletjs.com/) 1.9.4 (BSD-2-Clause), incluido en `web/vendor/`.
+PWA para apuntar puntos de interés fotográficos con el iPhone, también sin cobertura, y llevarlos a Light Studio.
+Worker de Cloudflare con **D1** (registro y cursor) + **R2** (fotos). El Worker sirve también la PWA.
 
-- Funciona primero en local (IndexedDB) y sincroniza cuando hay red.
-- Se instala en la pantalla de inicio (service worker + manifiesto) y puede bloquearse con Face ID / passkey.
-- Mapa base: OpenStreetMap o satélite de Esri (con sus atribuciones).
+```
+worker/   API v1 (src/index.js), esquema D1 (schema.sql), pruebas (test/)
+web/      PWA: index.html, app.js, sw.js, manifest, vendor/leaflet
+```
 
-## Qué hace falta para usarla
+Es opcional: Light Studio funciona sin él. Solo hace falta si quieres sincronizar puntos con el móvil. Necesitas una cuenta de Cloudflare (el plan gratuito basta para uso personal) y, si quieres, tu propio dominio (por ejemplo `pdi.example.com`).
 
-La app es solo el cliente: guarda y sincroniza contra un **Worker de Cloudflare** (con una base D1 para los puntos y un
-bucket R2 para las fotos) que **no está incluido en este repositorio**. La app web se sirve desde el mismo dominio que el
-Worker, porque llama a rutas relativas `/api/v1/...`.
+## Desplegar (una vez)
+```bash
+cd worker && npm install
+cp wrangler.example.toml wrangler.toml          # tu copia local; no se sube al repositorio
+npx wrangler login
+npx wrangler d1 create rawstudiopdi            # copia el database_id en wrangler.toml
+npx wrangler r2 bucket create rawstudiopdi-files
+npx wrangler d1 execute rawstudiopdi --remote --file=schema.sql
+npx wrangler secret put API_KEY                # clave larga: la usarán la PWA (1 vez) y Light Studio (llavero)
+npx wrangler secret put SESSION_SECRET         # cadena aleatoria (openssl rand -base64 32)
+npx wrangler deploy
+```
+En el iPhone: abrir la URL en Safari → Compartir → *Añadir a pantalla de inicio* → abrir una vez con cobertura y entrar en ⚙︎ con la clave.
 
-Para ponerlo en marcha necesitas:
+## Probar en local
+```bash
+cd worker
+printf 'API_KEY=clave-de-prueba-123\nSESSION_SECRET=secreto-de-prueba\n' > .dev.vars
+npx wrangler d1 execute rawstudiopdi --local --persist-to .state --file=schema.sql
+npx wrangler dev --local --persist-to .state --port 8799
+BASE=http://localhost:8799 npm test            # en otra terminal
+```
 
-1. Un Worker que sirva `web/` como archivos estáticos y ofrezca la API de abajo.
-2. Una base D1 y un bucket R2 propios, y una clave de acceso (guárdala como secreto del Worker, nunca en el código).
-3. Tu dominio, por ejemplo `pdi.example.com`. En Light Studio ▸ Ajustes ▸ PDI pones esa dirección y la clave.
-
-No publiques tu `wrangler.toml` real: lleva el identificador de tu cuenta y los de D1/R2. Usa una copia
-`wrangler.example.toml` con valores de ejemplo.
-
-## API que espera el cliente (`/api/v1`)
-
-| Ruta | Uso |
+## API (`/api/v1`, Bearer = clave o token de sesión)
+| Ruta | Qué hace |
 |---|---|
-| `GET /health` | Comprobación de que el Worker responde |
-| `POST /auth/session` | Cambia la clave del dispositivo por un token (`{key, device}`) |
-| `POST /auth/passkey/register/options`, `POST /auth/passkey/register` | Alta de passkey (Face ID) |
-| `POST /auth/passkey/login/options`, `POST /auth/passkey/login` | Entrada con passkey |
-| `POST /pair`, `POST /pair/claim` | Emparejar un dispositivo con un código de 8 caracteres (`XXXX-XXXX`) |
-| `GET /devices`, `POST /devices/{id}/revoke` | Listar y revocar dispositivos |
-| `POST /sync/push`, `GET /sync/pull?cursor=`, `POST /sync/ack` | Sincronización de cambios (por cursor, con borrados) |
-| `PUT /attachments?poi=&att=`, `GET /attachments/{key}` | Fotos de cada punto |
-| `GET /manifest?pair=` | Manifiesto que lleva el código de emparejamiento al instalar la app |
+| `GET /health` | Sin auth. |
+| `POST /auth/session` `{key,device}` | Cambia la clave por un token de 30 días. |
+| `POST /sync/push` `{ops:[…]}` | ≤100 ops: `upsert` (`op_id`, `base_version`, `poi`) o `delete`. Resultado por op: `accepted`, `duplicate`, `conflict`, `rejected`. |
+| `GET /sync/pull?cursor=N&limit=` | PDI con `seq > N` en orden, `cursor` nuevo y `has_more`. Incluye borrados (`deleted_at`). |
+| `POST /sync/ack` `{device,cursor}` | Guarda el último cursor del dispositivo. |
+| `PUT /attachments?poi=<uuid>&att=<uuid>` | Foto cruda (jpeg/png/webp ≤10 MB) → R2 `poi/<id>/<att>.<ext>`. Repetirla es inocuo. |
+| `GET /attachments/<key>` | Descarga (autenticada). |
+| `POST /auth/passkey/register/options` · `POST /auth/passkey/register` | (con sesión o clave) Registra el Face ID de un dispositivo (WebAuthn ES256). |
+| `POST /auth/passkey/login/options` · `POST /auth/passkey/login` | (público) Reto de un solo uso y verificación de la firma (presencia + verificación de usuario); devuelve token de sesión. |
 
-Las rutas protegidas usan `Authorization: Bearer <token>`. El detalle de formato lo definen `web/app.js` (cliente móvil)
-y `crates/app/src/services/pdi_sync.rs` (cliente de Light Studio).
+Reglas: altas idempotentes por `op_id`; versión por PDI; **conflicto = el servidor conserva lo suyo y la versión del cliente queda como copia «(conflicto)»**, nunca gana el último sin avisar; borrado lógico.
+
+## Face ID
+La PWA se bloquea al abrirla y tras 2 min en segundo plano (`LOCK_AFTER_MS` en `web/app.js`). Se activa una vez en ⚙︎ → *Activar Face ID*. Con cobertura, la firma de Face ID renueva la sesión; sin cobertura, desbloquea en local. «Usar la clave» en la pantalla de bloqueo la desactiva en ese dispositivo. El HTML/JS de la página es público pero no contiene datos; la API sigue exigiendo clave o sesión.
+Al actualizar un Worker ya desplegado: `npx wrangler d1 execute rawstudiopdi --remote --file=schema.sql` (crea las tablas nuevas; es repetible) y `npx wrangler deploy`.
+
+## Límites conocidos (v1)
+- Mapa: las teselas de OpenStreetMap vistas se guardan (máx. 800), pero **no hay descarga de zonas** para uso sin cobertura; eso exige otro proveedor/licencia (decisión pendiente).
+- Solo móvil → Mac en esta versión; la edición desde el Mac llegará con el cliente Rust.
+- Los borrados lógicos no se purgan aún (se purgarán cuando todos los dispositivos hagan `ack`).
+- Sin probar en iPhone real (Safari/iOS): solo Chrome de escritorio simulando offline.
+
+## Licencias
+Código bajo la licencia MIT del repositorio. La PWA incluye [Leaflet](https://leafletjs.com/) 1.9.4 (BSD-2-Clause) en `web/vendor/`.
+Mapas: © OpenStreetMap contributors; satélite: Esri, Maxar, Earthstar Geographics.

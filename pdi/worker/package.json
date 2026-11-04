@@ -1,0 +1,12 @@
+{
+  "name": "rawstudiopdi-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local --persist-to .state",
+    "test": "node --test test/api.test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}
