@@ -136,6 +136,27 @@ impl App {
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
     }
 
+    /// One frame of the interface: the planner, the settings window and the messages. The window's `ui` and the
+    /// windowless snapshots (see [`crate::snapshot`]) both call it.
+    pub fn draw(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        planner::show(self, ui);
+        if self.settings_open {
+            settings::show(self, &ctx);
+        }
+        self.show_toasts(&ctx);
+        self.open_fade_overlay(&ctx);
+        let now = ctx.input(|i| i.time);
+        self.save(now, false);
+    }
+
+    /// The background work that comes before each frame.
+    pub fn work(&mut self, ctx: &egui::Context) {
+        tasks::poll(self, ctx);
+        pdi::logic(self, ctx);
+        pdi_pair::logic(self, ctx);
+    }
+
     /// Writes the state when it changed since the last time (at most every few seconds unless `force`).
     pub fn save(&mut self, now: f64, force: bool) {
         if !force && now - self.saved_at < SAVE_EVERY {
@@ -155,21 +176,11 @@ impl App {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        tasks::poll(self, ctx);
-        pdi::logic(self, ctx);
-        pdi_pair::logic(self, ctx);
+        self.work(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
-        planner::show(self, ui);
-        if self.settings_open {
-            settings::show(self, &ctx);
-        }
-        self.show_toasts(&ctx);
-        self.open_fade_overlay(&ctx);
-        let now = ctx.input(|i| i.time);
-        self.save(now, false);
+        self.draw(ui);
     }
 
     fn on_exit(&mut self) {

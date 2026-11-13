@@ -1094,6 +1094,22 @@ fn labelled_number(ui: &mut Ui, rt: &mut Runtime, id: &str, label: &str, value: 
 
 // ---- the page ---------------------------------------------------------------------------------
 
+/// Opens the card called `name` (`info`, `sky`, `align`, `find` or `calc`) over the map, closing the others; `false` for
+/// any other name. The windowless snapshots use it to look at each card.
+pub fn open_card_named(rt: &mut Runtime, name: &str) -> bool {
+    use bigcard::Card;
+    let card = match name {
+        "info" => Card::Info,
+        "sky" => Card::Sky,
+        "align" => Card::Align,
+        "find" => Card::Find,
+        "calc" => Card::Calc,
+        _ => return false,
+    };
+    bigcard::open_only(rt, card);
+    true
+}
+
 pub fn show(app: &mut App, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let full = ui.max_rect();
@@ -1784,9 +1800,11 @@ impl Page<'_> {
                 p.text(pos2(plot.left() - 5.0, y), Align2::RIGHT_CENTER, label, t.font(10.0), t.text_dim);
             }
         }
-        for hour in (0..=24).step_by(3) {
+        // hour labels: as many as fit without touching, always on a whole number of hours
+        let step = [3_usize, 6, 12].into_iter().find(|s| plot.width() / (24.0 / *s as f32) >= 46.0).unwrap_or(12);
+        for hour in (0..=24).step_by(step) {
             let x = plot.left() + hour as f32 / 24.0 * plot.width();
-            p.line_segment([pos2(x, plot.bottom()), pos2(x, plot.bottom() + 4.0)], Stroke::new(1.0, t.text_dim));
+            p.line_segment([pos2(x, plot.bottom()), pos2(x, plot.bottom() + 3.0)], Stroke::new(1.0, t.divider));
             // the last label ends at the chart's edge instead of running past it
             let align = if hour == 24 { Align2::RIGHT_TOP } else { Align2::CENTER_TOP };
             let align = if hour == 0 { Align2::LEFT_TOP } else { align };

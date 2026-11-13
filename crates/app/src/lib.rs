@@ -14,6 +14,8 @@ pub mod pdi_pair;
 pub mod planner;
 pub mod services;
 pub mod settings;
+pub mod snapshot;
+pub mod softpaint;
 pub mod state;
 pub mod tasks;
 #[cfg(test)]
