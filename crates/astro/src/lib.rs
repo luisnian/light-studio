@@ -9,11 +9,15 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod align;
+pub mod besselian;
 pub mod eclipse;
 pub mod horizon;
 pub mod info;
+pub mod light;
 pub mod moon;
 pub mod optics;
+pub mod outing;
+pub mod panorama;
 pub mod plan;
 pub mod search;
 pub mod shade;
@@ -22,6 +26,7 @@ pub mod sun;
 pub mod time;
 
 pub use align::{Alignment, Body, Profile, Sight, alignments, destination, profile, shadow, sight};
+pub use light::{Light, Spot, light_at, spot, walk_seconds, walking_speed};
 pub use moon::{Phase, PhaseName, Principal, moon_coords, moon_coords_tt, moon_horizontal, moon_phase, next_phase, principal_phases};
 pub use plan::{
     CoreDay, DayPlan, MoonDay, NightProfile, NightScore, Skies, Span, SunDay, SunState, Twilight, dark_core_windows, night_profile, plan_day,

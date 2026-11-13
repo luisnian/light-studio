@@ -42,10 +42,29 @@ struct Entry {
     run: u64,
 }
 
+/// Where an archive's bytes come from: a file on this computer, or a server that answers byte ranges.
+pub trait ReadAt: Send + Sync + std::fmt::Debug {
+    /// `length` bytes from `offset` (fewer is an error).
+    fn read_at(&self, offset: u64, length: u64) -> Result<Vec<u8>, String>;
+}
+
+#[derive(Debug)]
+struct FileReader(Mutex<File>);
+
+impl ReadAt for FileReader {
+    fn read_at(&self, offset: u64, length: u64) -> Result<Vec<u8>, String> {
+        let mut f = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        f.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
+        let mut buf = vec![0u8; usize::try_from(length).map_err(|_| "too large".to_string())?];
+        f.read_exact(&mut buf).map_err(|e| e.to_string())?;
+        Ok(buf)
+    }
+}
+
 /// An open archive.
 #[derive(Debug)]
 pub struct Archive {
-    file: Mutex<File>,
+    reader: Box<dyn ReadAt>,
     len: u64,
     root: Vec<Entry>,
     leaf_offset: u64,
@@ -176,19 +195,23 @@ impl Archive {
         if length > cap || offset.checked_add(length).is_none_or(|end| end > self.len) {
             return Err("the map file points outside itself".into());
         }
-        let mut f = self.file.lock().unwrap_or_else(PoisonError::into_inner);
-        f.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
-        let mut buf = vec![0u8; usize::try_from(length).map_err(|_| "too large".to_string())?];
-        f.read_exact(&mut buf).map_err(|e| e.to_string())?;
-        Ok(buf)
+        self.reader.read_at(offset, length)
     }
 
     /// Opens an archive.
     pub fn open(path: &Path) -> Result<Archive, String> {
-        let mut file = File::open(path).map_err(|e| format!("could not open the map file: {e}"))?;
+        let file = File::open(path).map_err(|e| format!("could not open the map file: {e}"))?;
         let len = file.metadata().map_err(|e| e.to_string())?.len();
-        let mut h = vec![0u8; HEADER];
-        file.read_exact(&mut h).map_err(|_| "this is not a PMTiles map file".to_string())?;
+        if len < HEADER as u64 {
+            return Err("this is not a PMTiles map file".into());
+        }
+        Archive::from_reader(Box::new(FileReader(Mutex::new(file))), Some(len))
+    }
+
+    /// Opens an archive from a reader. `len` is the size when it is known (a file); for a server it is taken from what
+    /// the header says the archive holds.
+    pub fn from_reader(reader: Box<dyn ReadAt>, len: Option<u64>) -> Result<Archive, String> {
+        let h = reader.read_at(0, HEADER as u64)?;
         if h.get(0..7) != Some(b"PMTiles") || h.get(7) != Some(&3) {
             return Err("this is not a PMTiles version 3 map file".into());
         }
@@ -213,8 +236,15 @@ impl Archive {
         let (min_zoom, max_zoom) = (byte(100)?, byte(101)?);
         let deg = |at| i32_at(&h, at).map(|v| f64::from(v) / 1e7).ok_or_else(|| "the map file header is damaged".to_string());
         let bounds = [deg(102)?, deg(106)?, deg(110)?, deg(114)?];
+        let declared =
+            [root_off.checked_add(root_len), meta_off.checked_add(meta_len), leaf_off.checked_add(leaf_len), data_off.checked_add(data_len)]
+                .into_iter()
+                .try_fold(0u64, |m, e| e.map(|e| m.max(e)))
+                .ok_or_else(|| "the map file header is damaged".to_string())?;
+        let known = len.is_some();
+        let len = len.unwrap_or(declared);
         let mut a = Archive {
-            file: Mutex::new(file),
+            reader,
             len,
             root: Vec::new(),
             leaf_offset: leaf_off,
@@ -230,7 +260,7 @@ impl Archive {
             attribution: String::new(),
             leaves: Mutex::new(HashMap::new()),
         };
-        if data_off.checked_add(data_len).is_none_or(|e| e > len) {
+        if known && data_off.checked_add(data_len).is_none_or(|e| e > len) {
             return Err("the map file is shorter than its header says (an incomplete download?)".into());
         }
         let root = inflate(&a.read_at(root_off, root_len, MAX_DIR_BYTES)?, internal, MAX_DIR_BYTES)?;

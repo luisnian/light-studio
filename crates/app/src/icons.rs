@@ -27,6 +27,8 @@ pub enum Icon {
     Mountain,
     Pencil,
     Pin,
+    /// The Routes mode: a winding path from a dot to a ring.
+    Route,
     Planner,
     Plus,
     ResizeHorizontal,
@@ -37,6 +39,7 @@ pub enum Icon {
     Sliders,
     Sun,
     Target,
+    Trash,
 }
 
 /// Draws `icon` inside `r` in `color`.
@@ -220,6 +223,16 @@ pub fn paint(p: &Painter, r: Rect, icon: Icon, color: Color32) {
             line(&[(0.14, 0.7), (0.86, 0.7)]);
             dot(0.62, 0.3, 0.1);
             dot(0.36, 0.7, 0.1);
+        }
+        Icon::Route => {
+            dot(0.225, 0.8, 0.09);
+            circle(0.775, 0.225, 0.11);
+            line(&[(0.225, 0.7), (0.225, 0.56), (0.4, 0.47), (0.6, 0.58), (0.775, 0.48), (0.775, 0.335)]);
+        }
+        Icon::Trash => {
+            line(&[(0.15, 0.275), (0.85, 0.275)]);
+            line(&[(0.4, 0.275), (0.4, 0.15), (0.6, 0.15), (0.6, 0.275)]);
+            closed(&[(0.25, 0.275), (0.75, 0.275), (0.7, 0.85), (0.3, 0.85)]);
         }
         Icon::Target => {
             circle(0.5, 0.5, 0.38);

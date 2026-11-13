@@ -17,21 +17,100 @@ impl Page<'_> {
     /// credit go) and `blocked` the panels themselves (the map takes no clicks, drags or scrolling there).
     pub(super) fn map_view(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, outer: Rect, free: Rect, blocked: &[Rect]) {
         let t = self.t;
-        let pal = self.pal;
         let c = self.c;
         let ctx = ui.ctx().clone();
         let resp = ui.interact(outer, egui::Id::new("planner-map"), Sense::click_and_drag());
         let now = ctx.input(|i| i.time);
         let mode = st.map_mode;
         let planner = mode == MapMode::Planner;
+        // the list of routes floats over the map's right side: the map takes no clicks, drags or scrolling there
+        // (the routes card is a big card in the middle; closed, it leaves a small button)
+        let card_open = mode == MapMode::Routes && !rt.routes_card_closed;
+        let routes_card = card_open.then(|| super::routes_card::card_rect(free));
+        let routes_panel = (mode == MapMode::Routes && !card_open).then(|| super::routes::panel_rect(self.rail_right, free));
+        let routes_profile = routes_panel.and_then(|_| super::routes::profile_rect(st, rt, free));
+        let blocked_all: Vec<Rect> = blocked.iter().copied().chain(routes_card).chain(routes_panel).chain(routes_profile).collect();
+        let blocked: &[Rect] = &blocked_all;
         self.tiles.next_frame();
         st.map = clamp_view(st.map.sane(), outer);
+        // a route was imported or picked in the list: bring all of it into view
+        // (with the card open the map is behind it: the route is brought into view when the card closes)
+        let fit_route = if routes_panel.is_some() { rt.route_fit.take() } else { None };
+        if let (Some(id), Some(panel)) = (fit_route, routes_panel)
+            && let Some(v) = super::routes::fit_view(st, id, free, panel)
+        {
+            st.map = clamp_view(v, outer);
+        }
         let under_panel = |p: Option<Pos2>| p.is_some_and(|p| blocked.iter().any(|r| r.contains(p)));
         let (hover, origin) = ctx.input(|i| (i.pointer.hover_pos(), i.pointer.press_origin()));
         let free_pointer = !under_panel(hover);
         // (the map is centred in the part not under the panels)
         let input_ok = !(under_panel(origin) || under_panel(resp.interact_pointer_pos()));
 
+        self.pan_zoom(&ctx, st, &resp, input_ok, free_pointer, outer, free);
+        let cam = Cam::new(st.map, free);
+
+        self.map_clicks(ui, st, rt, &resp, input_ok, cam, planner);
+
+        let painter = ui.painter_at(outer);
+        painter.rect_filled(outer, 0.0, t.canvas);
+        draw_tiles(&mut *self.tiles, &self.carto, self.satellite, st.map.zoom, &ctx, &painter, outer, cam, now, planner && st.show_light);
+
+        // the terrain's shadows at the time shown, on the tiles and under everything else
+        if planner && st.show_shadows {
+            self.shade_overlay(&painter, st, rt, cam, free);
+        }
+        // from the place: where each body rises and sets, and where it is now
+        let (wx, wy) = map_tiles::project(st.lat, st.lon);
+        let origin = cam.screen(wx, wy);
+        let reach = (free.width().min(free.height()) * 0.42).max(90.0);
+        let at_time = c.start + self.minute * 60.0;
+        if planner && st.show_twilight {
+            self.twilight_tint(&painter, cam, outer, at_time);
+        }
+        if planner
+            && st.show_eclipse
+            && let Some(path) = self.eclipse_path(rt, at_time)
+        {
+            self.eclipse_band(&painter, cam, &path);
+        }
+        let curved =
+            planner && (st.show_arc || st.meteor.is_some() || st.sun_style == LineStyle::Trajectory || st.moon_style == LineStyle::Trajectory);
+        if curved {
+            self.elevation_circles(&painter, origin, reach);
+        }
+        if planner && st.show_arc {
+            self.milky_way_arc(&painter, origin, reach, at_time);
+        }
+        if let Some(shower) = st.meteor.filter(|_| planner) {
+            self.meteor_layer(&painter, origin, reach, shower);
+        }
+        self.body_lines(&painter, st, cam, origin, wx, reach, at_time, outer, planner);
+        if planner && st.cam_tool > 0 {
+            self.camera_tool(ui, &painter, st, &cam, origin, reach);
+        }
+        self.target_layer(&painter, st, cam, origin, wx, planner);
+        self.poi_pins(ui, &painter, st, mode, cam, wx, outer, blocked);
+
+        if mode == MapMode::Routes {
+            self.draw_routes(ui, &painter, st, rt, &cam, outer, &blocked_all);
+        }
+
+        self.map_rail(ui, &painter, st, rt, mode, planner, free, routes_card, routes_panel, routes_profile);
+
+        self.map_notes(ui, &painter, st, free, planner);
+    }
+
+    fn pan_zoom(
+        &mut self,
+        ctx: &egui::Context,
+        st: &mut PlannerState,
+        resp: &egui::Response,
+        input_ok: bool,
+        free_pointer: bool,
+        outer: Rect,
+        free: Rect,
+    ) {
         // pan, zoom
         if input_ok && resp.dragged() {
             let d = resp.drag_delta();
@@ -56,8 +135,9 @@ impl Page<'_> {
             st.map = zoom_about(st.map, free, at, (st.map.zoom + 1.0).round());
         }
         st.map = clamp_view(st.map, outer);
-        let cam = Cam::new(st.map, free);
+    }
 
+    fn map_clicks(&mut self, _ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, resp: &egui::Response, input_ok: bool, cam: Cam, planner: bool) {
         // a click moves the place there (the map stays where it is); a right-click, or a click with the target
         // button on, puts the target there
         if input_ok
@@ -101,9 +181,17 @@ impl Page<'_> {
                     if ui.button(crate::i18n::tr("Set the Target Here")).clicked() {
                         chosen = Some((2, lat, lon));
                     }
-                    // always shown, grey when there is no target
-                    if ui.add_enabled(st.target.is_some(), egui::Button::new(crate::i18n::tr("Remove the Target"))).clicked() {
+                    // always offered (greyed while there is no target), so it is easy to find
+                    let has_target = st.target.is_some();
+                    if ui.add_enabled(has_target, egui::Button::new(crate::i18n::tr("Remove the Target"))).clicked() {
                         chosen = Some((3, lat, lon));
+                    }
+                    ui.separator();
+                    if ui.add_enabled(rt.pins.can_undo(), egui::Button::new(crate::i18n::tr("Undo the Last Pin"))).clicked() {
+                        chosen = Some((4, lat, lon));
+                    }
+                    if ui.add_enabled(rt.pins.can_redo(), egui::Button::new(crate::i18n::tr("Redo the Pin"))).clicked() {
+                        chosen = Some((5, lat, lon));
                     }
                 }
                 if chosen.is_some() {
@@ -126,8 +214,20 @@ impl Page<'_> {
                         self.new_plan_at(st, rt, lat, lon, None);
                         st.map_mode = MapMode::Plans;
                     }
-                    2 => st.target = Some([lat, lon]),
-                    _ => st.target = None,
+                    3 => {
+                        st.target = None;
+                        st.target_mode = false;
+                    }
+                    4 | 5 => {
+                        let now = super::pin_history::Pins::of(st);
+                        let step = if what == 4 { rt.pins.undo(now) } else { rt.pins.redo(now) };
+                        if let Some(p) = step {
+                            set_place(st, p.lat, p.lon, p.place.clone());
+                            st.target = p.target;
+                            rt.align = None;
+                        }
+                    }
+                    _ => st.target = Some([lat, lon]),
                 }
                 if what < 2 {
                     st.show_horizon = false;
@@ -135,40 +235,23 @@ impl Page<'_> {
                 }
             }
         }
+    }
 
-        let painter = ui.painter_at(outer);
-        painter.rect_filled(outer, 0.0, t.canvas);
-        draw_tiles(&mut *self.tiles, &self.carto, self.satellite, st.map.zoom, &ctx, &painter, outer, cam, now, planner && st.show_light);
-
-        // the terrain's shadows at the time shown, on the tiles and under everything else
-        if planner && st.show_shadows {
-            self.shade_overlay(&painter, st, rt, cam, free);
-        }
-        // from the place: where each body rises and sets, and where it is now
-        let (wx, wy) = map_tiles::project(st.lat, st.lon);
-        let origin = cam.screen(wx, wy);
-        let reach = (free.width().min(free.height()) * 0.42).max(90.0);
-        let at_time = c.start + self.minute * 60.0;
-        if planner && st.show_twilight {
-            self.twilight_tint(&painter, cam, outer, at_time);
-        }
-        if planner
-            && st.show_eclipse
-            && let Some(path) = self.eclipse_path(rt, at_time)
-        {
-            self.eclipse_band(&painter, cam, &path);
-        }
-        let curved =
-            planner && (st.show_arc || st.meteor.is_some() || st.sun_style == LineStyle::Trajectory || st.moon_style == LineStyle::Trajectory);
-        if curved {
-            self.elevation_circles(&painter, origin, reach);
-        }
-        if planner && st.show_arc {
-            self.milky_way_arc(&painter, origin, reach, at_time);
-        }
-        if let Some(shower) = st.meteor.filter(|_| planner) {
-            self.meteor_layer(&painter, origin, reach, shower);
-        }
+    fn body_lines(
+        &mut self,
+        painter: &egui::Painter,
+        st: &PlannerState,
+        cam: Cam,
+        origin: Pos2,
+        wx: f64,
+        reach: f32,
+        at_time: f64,
+        outer: Rect,
+        planner: bool,
+    ) {
+        let t = self.t;
+        let pal = self.pal;
+        let c = self.c;
         let p = &c.plan;
         // the length of a line: a fixed reach, or out to the edge of the map when the discs are drawn
         let long = if st.show_size { outer.size().max_elem() * 1.5 } else { reach };
@@ -186,24 +269,36 @@ impl Page<'_> {
             }
             if style == LineStyle::Trajectory {
                 let (path, color) = if layer == 0 { (&c.sun, SUN_NOW) } else { (&c.moon, MOON_NOW) };
-                self.trajectory(&painter, origin, reach, path, color);
+                self.trajectory(painter, origin, reach, path, color);
             }
             if style == LineStyle::Light {
                 let (path, color) = if layer == 0 { (&c.sun, SUN_NOW) } else { (&c.moon, MOON_NOW) };
-                self.light_arrows(&painter, origin, reach, path, color);
+                self.light_arrows(painter, origin, reach, path, color);
                 continue;
             }
             for (az, time, color) in evs {
                 if let (Some(az), Some(time)) = (az, time) {
                     if st.show_size {
-                        wedge(&painter, origin, az, half, long, color);
+                        wedge(painter, origin, az, half, long, color);
                     }
                     if st.long_lines {
                         let line = geodesic(&cam, wx, st.lat, st.lon, az, 3000.0);
                         painter.add(Shape::line(line, Stroke::new(5.0, color.gamma_multiply(0.85))));
                     }
-                    band(&painter, origin, az, reach, color, 6.0);
-                    label_chip(&painter, &t, origin, az, reach, color, &clock(time, c.offset));
+                    band(painter, origin, az, reach, color, 6.0);
+                    label_chip(painter, &t, origin, az, reach, color, &clock(time, c.offset));
+                }
+            }
+            // where the body really appears and disappears over the skyline, when that is not where the flat horizon says
+            if let Some(real) = self.real.as_deref() {
+                let v = [&real.sun, &real.moon, &real.core][layer];
+                for (real_event, (flat_az, _, color)) in [v.first, v.last].into_iter().zip(evs) {
+                    let Some((time, az)) = real_event else { continue };
+                    let apart = flat_az.is_none_or(|f| ((az - f + 540.0).rem_euclid(360.0) - 180.0).abs() > 1.5);
+                    if apart {
+                        band(painter, origin, az, reach, color, 2.5);
+                        label_chip(painter, &t, origin, az, reach * 0.8, color, &clock(time, c.offset));
+                    }
                 }
             }
         }
@@ -227,16 +322,75 @@ impl Page<'_> {
                 painter.add(Shape::line(path.clone(), Stroke::new(5.0, Color32::from_black_alpha(70))));
                 painter.add(Shape::line(path, Stroke::new(2.6, color)));
             }
-            arrow_head(&painter, origin, h.az, reach, color);
-            label_chip(&painter, &t, origin, h.az, reach * 0.8, color, &alt_text(h.alt));
+            arrow_head(painter, origin, h.az, reach, color);
+            label_chip(painter, &t, origin, h.az, reach * 0.8, color, &alt_text(h.alt));
         }
-        if planner && st.cam_tool > 0 {
-            self.camera_tool(ui, &painter, st, &cam, origin, reach);
+    }
+
+    /// Around the black pin: the circle of distances at which the object (its height is set with the target) looks as big as the
+    /// Moon or the Sun, and the spot on it, behind the object as seen from the body, where the body stands right over it.
+    fn size_circles(&self, painter: &egui::Painter, st: &PlannerState, cam: Cam, wx: f64, la: f64, lo: f64) {
+        let t = self.t;
+        let moon = light_studio_astro::info::moon_size(self.c.start + self.minute * 60.0).0;
+        for (layer, diameter, color, body) in [(0, 0.533, SUN_NOW, self.skies.sun), (1, moon, MOON_NOW, self.skies.moon)] {
+            let Some(d) = light_studio_astro::align::distance_to_match(st.target_height, diameter).filter(|d| *d < 200_000.0) else { continue };
+            if !st.layers[layer] {
+                continue;
+            }
+            let screen = |az: f64| {
+                let (pla, plo) = light_studio_astro::align::destination(la, lo, az, d);
+                let (x, y) = map_tiles::project(pla, plo);
+                let mut dx = x - wx;
+                dx -= dx.round();
+                cam.screen(wx + dx, y)
+            };
+            let ring: Vec<Pos2> = (0..=72).map(|k| screen(f64::from(k) * 5.0)).collect();
+            painter.extend(Shape::dashed_line(&ring, Stroke::new(1.6, color.gamma_multiply(0.85)), 7.0, 6.0));
+            // standing here, the object is between you and the body
+            if body.alt > 0.0 {
+                let spot = screen(body.az + 180.0);
+                painter.circle_filled(spot, 5.0, color);
+                painter.circle_stroke(spot, 5.0, Stroke::new(1.4, Color32::BLACK.gamma_multiply(0.6)));
+                let text = if d >= 1000.0 { format!("{:.1} km", d / 1000.0) } else { format!("{d:.0} m") };
+                let g = painter.layout_no_wrap(text, t.font(11.0), t.text);
+                let chip = Rect::from_center_size(spot + vec2(0.0, -16.0), g.size() + vec2(10.0, 5.0));
+                painter.rect_filled(chip, 8.0, crate::theme::chip_fill(&t));
+                painter.rect_stroke(chip, 8.0, Stroke::new(1.2, color), StrokeKind::Inside);
+                painter.galley(chip.center() - g.size() / 2.0, g, t.text);
+            }
+        }
+    }
+
+    fn target_layer(&mut self, painter: &egui::Painter, st: &PlannerState, cam: Cam, origin: Pos2, wx: f64, planner: bool) {
+        // the ground line from which the picked satellite transit is seen
+        if let Some((line, target, unix)) = self.sat_line.as_ref().filter(|_| planner) {
+            let pts: Vec<Pos2> = line
+                .iter()
+                .map(|&(la, lo)| {
+                    let (x, y) = map_tiles::project(la, lo);
+                    let mut dx = x - wx;
+                    dx -= dx.round();
+                    cam.screen(wx + dx, y)
+                })
+                .collect();
+            let color = if *target == super::satellites::Target::Sun { SUN_NOW } else { MOON_NOW };
+            if pts.len() > 1 {
+                painter.add(Shape::line(pts.clone(), Stroke::new(8.0, Color32::from_black_alpha(90))));
+                painter.add(Shape::line(pts.clone(), Stroke::new(4.0, color)));
+                if let Some(mid) = pts.get(pts.len() / 2) {
+                    let text = format!("{} · {}", crate::i18n::tr("Transit line"), super::satellites::clock_seconds(*unix, self.c.offset));
+                    let g = painter.layout_no_wrap(text, self.t.font(11.0), self.t.text);
+                    let chip = Rect::from_center_size(*mid + vec2(0.0, -18.0), g.size() + vec2(10.0, 5.0));
+                    painter.rect_filled(chip, 8.0, crate::theme::chip_fill(&self.t));
+                    painter.rect_stroke(chip, 8.0, Stroke::new(1.2, color), StrokeKind::Inside);
+                    painter.galley(chip.center() - g.size() / 2.0, g, self.t.text);
+                }
+            }
         }
         // the place's pin: where a point of interest or a plan would be made
-        painter.circle_filled(origin, 4.5, t.accent);
-        painter.circle_stroke(origin, 6.5, Stroke::new(1.5, t.chrome));
-        crate::icons::paint(&painter, Rect::from_center_size(pos2(origin.x, origin.y - 16.0), vec2(26.0, 26.0)), Icon::Pin, t.text);
+        painter.circle_filled(origin, 4.5, self.t.accent);
+        painter.circle_stroke(origin, 6.5, Stroke::new(1.5, self.t.chrome));
+        crate::icons::paint(painter, Rect::from_center_size(pos2(origin.x, origin.y - 16.0), vec2(26.0, 26.0)), Icon::Pin, self.t.text);
         // the black pin and the dotted line to it (over the bodies' lines)
         if let Some([la, lo]) = st.target.filter(|_| planner) {
             let (tx, ty) = map_tiles::project(la, lo);
@@ -244,7 +398,8 @@ impl Page<'_> {
             dx -= dx.round();
             let at = cam.screen(wx + dx, ty);
             painter.add(Shape::dotted_line(&[origin, at], Color32::WHITE, 8.0, 1.8));
-            black_pin(&painter, at);
+            black_pin(painter, at);
+            self.size_circles(painter, st, cam, wx, la, lo);
         }
 
         // the target's shadow at the time shown (its object's height, the Sun's height and direction)
@@ -261,6 +416,10 @@ impl Page<'_> {
             let (a, b) = (screen(la, lo), screen(ela, elo));
             painter.line_segment([a, b], Stroke::new(6.0, Color32::from_black_alpha(150)));
         }
+    }
+
+    fn poi_pins(&mut self, ui: &mut Ui, painter: &egui::Painter, st: &PlannerState, mode: MapMode, cam: Cam, wx: f64, outer: Rect, blocked: &[Rect]) {
+        let t = self.t;
         // the plans (blue pins, a click opens the plan) and the points of interest (red pins, a click opens the
         // record): each its own list, shown or hidden on its own
         // (a plan at the very spot of a point of interest steps aside so both pins show)
@@ -277,7 +436,7 @@ impl Page<'_> {
                 }
                 let when = format!("{} · {:02}:{:02}", p.date, (p.minute as i64) / 60, (p.minute as i64) % 60);
                 let resp =
-                    pin(ui, &painter, at, t.accent, Icon::Calendar, egui::Id::new(("planner-plan-pin", p.id)), format!("planner:mapPlan:{}", p.id));
+                    pin(ui, painter, at, t.accent, Icon::Calendar, egui::Id::new(("planner-plan-pin", p.id)), format!("planner:mapPlan:{}", p.id));
                 if resp.clicked() {
                     self.intents.push(Intent::OpenPlan(p.id));
                 }
@@ -294,9 +453,9 @@ impl Page<'_> {
             for (i, p) in st.saved.iter().enumerate() {
                 let Some(at) = visible(&cam, wx, p.lat, p.lon, outer, blocked) else { continue };
                 let resp =
-                    pin(ui, &painter, at, super::places::POI_RED, Icon::Pin, egui::Id::new(("planner-site", i)), format!("planner:mapSite:{i}"));
+                    pin(ui, painter, at, super::places::POI_RED, Icon::Pin, egui::Id::new(("planner-site", i)), format!("planner:mapSite:{i}"));
                 if p.fresh {
-                    ring_new(&painter, at - vec2(0.0, 14.0), ui.input(|i| i.time));
+                    ring_new(painter, at - vec2(0.0, 14.0), ui.input(|i| i.time));
                     ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
                 }
                 if resp.clicked() {
@@ -314,11 +473,28 @@ impl Page<'_> {
                 }
             }
         }
+    }
 
-        // the rail, top right: the map mode alone at rest; under the pointer it grows downward (the icons of the mode shown,
-        // then the information card), like the island on the left. The map zooms with the wheel or a pinch.
+    fn map_rail(
+        &mut self,
+        ui: &mut Ui,
+        painter: &egui::Painter,
+        st: &mut PlannerState,
+        rt: &mut Runtime,
+        mode: MapMode,
+        planner: bool,
+        free: Rect,
+        routes_card: Option<Rect>,
+        routes_panel: Option<Rect>,
+        routes_profile: Option<Rect>,
+    ) {
+        let t = self.t;
+        let ctx = ui.ctx().clone();
+        // the rail, at the right edge and all the way down like the tool strip of the other pages: its icons (the mode's, then
+        // the information card) from the top
         let count = match mode {
             MapMode::Pois | MapMode::Plans => 6,
+            MapMode::Routes => 7,
             MapMode::Planner => 12,
         };
         let sz = vec2(32.0, 34.0);
@@ -335,7 +511,7 @@ impl Page<'_> {
         ctx.data_mut(|d| d.insert_temp(grow_id, bar));
         let k = super::layout::card_opacity(ui.ctx(), "rail", bar, over);
         painter.rect_filled(bar.translate(vec2(0.0, 1.5)), 9.0, Color32::from_black_alpha(50).gamma_multiply(k));
-        crate::theme::paint_chip_at(&painter, bar, &t, k);
+        crate::theme::paint_chip_at(painter, bar, &t, k);
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(full_bar.shrink2(vec2(2.0, 3.0))).layout(egui::Layout::top_down(Align::Center)));
         child.set_clip_rect(bar.shrink2(vec2(0.0, 1.0)).intersect(ui.clip_rect()));
         child.spacing_mut().item_spacing.y = 0.0;
@@ -355,6 +531,13 @@ impl Page<'_> {
         }
         match mode {
             MapMode::Plans => {}
+            MapMode::Routes => {
+                if crate::widgets::icon_button_grow(&mut child, "plannerMapImportRoute", Icon::Plus, sz, false, true, "Import a Route (GPX)…")
+                    .clicked()
+                {
+                    self.intents.push(Intent::ImportRoute);
+                }
+            }
             MapMode::Pois => {
                 if crate::widgets::icon_button_grow(
                     &mut child,
@@ -437,16 +620,28 @@ impl Page<'_> {
         if rt.layers_open && planner {
             self.layers_panel(ui, st, rt, bar, free);
         }
+        if let Some(r) = routes_card {
+            self.routes_card(ui, st, rt, r);
+        }
+        if let Some(r) = routes_panel {
+            self.routes_chip(ui, rt, r);
+        }
+        if let Some(r) = routes_profile {
+            self.routes_profile(ui, st, rt, r);
+        }
         // last, so the list lies over the other cards
         if rt.mode_menu {
             self.mode_menu(ui, st, rt, mode_button);
         }
+    }
 
+    fn map_notes(&mut self, ui: &mut Ui, painter: &egui::Painter, st: &PlannerState, free: Rect, planner: bool) {
+        let t = self.t;
         // while placing the target, a line says what the next click does (otherwise the map has no legend)
         if planner && st.target_mode {
             let hint = painter.layout_no_wrap(crate::i18n::tr("Click the map to put the target there.").to_string(), t.font(11.0), t.text);
             let hr = Rect::from_min_size(pos2(free.left(), free.bottom() - 24.0), hint.size() + vec2(20.0, 24.0 - hint.size().y));
-            crate::theme::paint_chip(&painter, hr, &t);
+            crate::theme::paint_chip(painter, hr, &t);
             painter.galley(pos2(hr.left() + 10.0, hr.center().y - hint.size().y / 2.0), hint, t.text);
         }
         // the tiles' credit (the imagery's licence asks for it) folds into a small © at the corner; the text shows on hover
@@ -493,7 +688,6 @@ impl Page<'_> {
                 st.show_horizon = false;
                 st.target_mode = false;
                 st.map_mode = m;
-                // (the side panel is never opened for you: it stays as it was)
             }
             rt.mode_menu = false;
         } else if !inside && ui.input(|i| i.pointer.any_pressed()) {
@@ -615,7 +809,7 @@ fn visible(cam: &Cam, place_x: f64, lat: f64, lon: f64, outer: Rect, blocked: &[
 }
 
 /// A map pin: a drop in `color` with an icon on its head, its tip at `at`.
-fn pin(ui: &mut Ui, painter: &egui::Painter, at: Pos2, color: Color32, icon: Icon, id: egui::Id, _name: String) -> egui::Response {
+pub(super) fn pin(ui: &mut Ui, painter: &egui::Painter, at: Pos2, color: Color32, icon: Icon, id: egui::Id, _name: String) -> egui::Response {
     let head = Rect::from_center_size(pos2(at.x, at.y - 17.0), vec2(26.0, 26.0));
     let resp = ui.interact(head.union(Rect::from_center_size(at, vec2(12.0, 2.0))), id, Sense::click());
     let lift = if resp.hovered() { 2.0 } else { 0.0 };
@@ -678,6 +872,45 @@ fn ring_new(painter: &egui::Painter, centre: Pos2, time: f64) {
                 centre + vec2(a.cos() as f32, a.sin() as f32) * 21.0
             })
             .collect();
-        painter.add(Shape::line(points, Stroke::new(3.0, colour)));
+        painter.add(egui::Shape::line(points, egui::Stroke::new(3.0, colour)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::MapView;
+
+    fn cam() -> (Cam, Rect) {
+        let outer = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
+        (Cam::new(MapView { lat: 43.3, lon: -2.0, zoom: 8.0 }, outer), outer)
+    }
+
+    #[test]
+    fn an_azimuth_points_north_up_and_east_right() {
+        let (n, e, s) = (ray_dir(0.0), ray_dir(90.0), ray_dir(180.0));
+        assert!(n.x.abs() < 1e-6 && (n.y + 1.0).abs() < 1e-6);
+        assert!((e.x - 1.0).abs() < 1e-6 && e.y.abs() < 1e-6);
+        assert!((s.y - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_place_is_visible_when_in_view_and_not_under_a_panel() {
+        let (cam, outer) = cam();
+        let (px, _) = map_tiles::project(43.3, -2.0);
+        let centre = visible(&cam, px, 43.3, -2.0, outer, &[]).expect("in view");
+        assert!((centre - outer.center()).length() < 1.0);
+        assert!(visible(&cam, px, 43.3, -2.0, outer, &[Rect::from_center_size(outer.center(), vec2(50.0, 50.0))]).is_none(), "under a panel");
+        assert!(visible(&cam, px, -40.0, 100.0, outer, &[]).is_none(), "far away");
+        assert!(visible(&cam, px, f64::NAN, 0.0, outer, &[]).is_none());
+        assert!(visible(&cam, px, 0.0, f64::INFINITY, outer, &[]).is_none());
+    }
+
+    #[test]
+    fn the_world_repeats_so_a_place_across_the_date_line_is_found_nearby() {
+        let outer = Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0));
+        let cam = Cam::new(MapView { lat: 0.0, lon: 179.9, zoom: 6.0 }, outer);
+        let (px, _) = map_tiles::project(0.0, 179.9);
+        assert!(visible(&cam, px, 0.0, -179.9, outer, &[]).is_some());
     }
 }

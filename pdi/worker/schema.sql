@@ -56,3 +56,14 @@ CREATE TABLE IF NOT EXISTS challenges (
   kind       TEXT NOT NULL,             -- register | login
   expires    INTEGER NOT NULL           -- ms epoch
 );
+
+-- Rutas enviadas desde el Mac (línea, waypoints y cifras); el móvil las descarga y las guarda para verlas sin cobertura
+CREATE TABLE IF NOT EXISTS routes (
+  id         TEXT PRIMARY KEY,          -- UUID v4 creado en el Mac
+  name       TEXT NOT NULL,
+  distance_m REAL NOT NULL,
+  ascent_m   REAL NOT NULL,
+  descent_m  REAL NOT NULL,
+  data       TEXT NOT NULL,             -- JSON {points:[[lat,lon,ele?]], waypoints:[{name,lat,lon}]}
+  updated_at TEXT NOT NULL
+);

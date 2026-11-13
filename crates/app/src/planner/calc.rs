@@ -279,3 +279,18 @@ impl Page<'_> {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::metres;
+
+    #[test]
+    fn distances_are_written_in_metres_with_the_digits_that_matter() {
+        assert_eq!(metres(1500.0), "1.50");
+        assert_eq!(metres(9990.0), "9.99");
+        assert_eq!(metres(25_000.0), "25.0");
+        assert_eq!(metres(250_000.0), "250");
+        assert_eq!(metres(f64::INFINITY), "∞");
+        assert_eq!(metres(f64::NAN), "∞");
+    }
+}

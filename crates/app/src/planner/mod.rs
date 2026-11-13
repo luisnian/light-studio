@@ -26,13 +26,20 @@ mod lineup;
 mod map;
 mod notebook;
 mod phone;
+mod pin_history;
 mod places;
-mod plans;
-mod pois;
-mod satellites;
+pub(crate) mod plans;
+pub(crate) mod pois;
+pub(crate) mod routes;
+mod routes_card;
+mod routes_light;
+mod routes_phone;
 pub use pois::Gone;
+pub use routes::SavedRoute;
+pub use routes_phone::{new_phone_id, phone_json};
 mod popup;
-mod saved;
+mod satellites;
+pub(crate) mod saved;
 mod shade;
 mod sheet;
 mod skycal;
@@ -55,7 +62,7 @@ use light_studio_astro::sky::SHOWERS;
 use light_studio_astro::sun::{Horizontal, Observer};
 use light_studio_astro::time::{DAY, Date};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 
 pub use layout::Tab;
 pub use places::SiteStatus;
@@ -86,18 +93,25 @@ const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Au
 pub enum MapMode {
     Pois,
     Plans,
+    /// GPX routes (from Wikiloc and the like) drawn on the map.
+    Routes,
     #[default]
     Planner,
 }
 
-pub(super) const MAP_MODES: [(MapMode, &str, &str); 3] =
-    [(MapMode::Pois, "pois", "Points of Interest"), (MapMode::Plans, "plans", "Plans"), (MapMode::Planner, "planner", "Planner")];
+pub(super) const MAP_MODES: [(MapMode, &str, &str); 4] = [
+    (MapMode::Pois, "pois", "Points of Interest"),
+    (MapMode::Plans, "plans", "Plans"),
+    (MapMode::Routes, "routes", "Routes"),
+    (MapMode::Planner, "planner", "Planner"),
+];
 
 impl MapMode {
     pub(super) fn icon(self) -> Icon {
         match self {
             MapMode::Pois => Icon::Pin,
             MapMode::Plans => Icon::Calendar,
+            MapMode::Routes => Icon::Route,
             MapMode::Planner => Icon::Planner,
         }
     }
@@ -164,6 +178,8 @@ pub struct PlannerState {
     pub target_height: f64,
     /// Shots kept for later (shown on the Map too).
     pub plans: Vec<Plan>,
+    /// The routes imported from GPX files (Routes mode of the map).
+    pub routes: Vec<routes::SavedRoute>,
     /// The plan last opened or kept (highlighted in the list).
     pub open_plan: Option<u64>,
     /// The reminder new plans get (minutes before; 0: none).
@@ -214,6 +230,8 @@ pub struct PlannerState {
     /// The body must clear the skyline by this many degrees (low and high), when `find_skyline`.
     pub find_skyline: bool,
     pub find_margin: [f64; 2],
+    /// The sky's brightness (mag/arcsec²) the photographer gave for a place: latitude, longitude, value.
+    pub sky_mag: Option<[f64; 3]>,
     pub find_az: f64,
     pub find_alt: f64,
     pub find_use_alt: bool,
@@ -272,7 +290,7 @@ pub struct SavedPlace {
     pub base: u64,
     pub dirty: bool,
     pub conflict: bool,
-    /// Came from the phone and has not been opened yet: marked with a ring on the map.
+    /// Came from the phone and has not been opened here yet: the map rings it, until the first time it is looked at.
     pub fresh: bool,
 }
 
@@ -343,6 +361,7 @@ impl Default for PlannerState {
             target: None,
             target_height: 0.0,
             plans: Vec::new(),
+            routes: Vec::new(),
             open_plan: None,
             alarm: 60,
             target_mode: false,
@@ -374,6 +393,7 @@ impl Default for PlannerState {
             find_no_moon: false,
             find_skyline: false,
             find_margin: [0.0, 1.0],
+            sky_mag: None,
             find_az: 90.0,
             find_alt: 10.0,
             find_use_alt: false,
@@ -418,6 +438,12 @@ impl PlannerState {
         self.aperture = clamp(self.aperture, 0.7, 64.0, d.aperture);
         self.distance = clamp(self.distance, 0.05, 100_000.0, d.distance);
         self.megapixels = clamp(self.megapixels, 0.5, 400.0, d.megapixels);
+        if self.sky_mag.is_some_and(|m| !m.iter().all(|v| v.is_finite()) || m[0].abs() > 90.0 || m[1].abs() > 180.0) {
+            self.sky_mag = None;
+        }
+        if let Some(m) = &mut self.sky_mag {
+            m[2] = m[2].clamp(14.0, 22.5);
+        }
         self.sane_lenses();
         self.sane_searches();
         self.tl_event_h = clamp(self.tl_event_h, 0.01, 240.0, d.tl_event_h);
@@ -485,6 +511,11 @@ impl PlannerState {
         for p in &mut self.plans {
             p.tidy();
         }
+        self.routes.retain(routes::SavedRoute::is_sane);
+        self.routes.truncate(routes::MAX_ROUTES);
+        for r in &mut self.routes {
+            r.tidy();
+        }
         // every point has an id of its own (a repeated one, as in a hand-edited file, is made new)
         let mut seen = std::collections::HashSet::new();
         for p in &mut self.saved {
@@ -538,6 +569,22 @@ struct Computed {
 pub struct Runtime {
     /// The photos from the phone, decoded.
     phone: phone::Cache,
+    /// The route selected in the Routes list, and the one the map is to bring into view at its next frame.
+    pub(crate) route_sel: Option<u64>,
+    pub(crate) route_fit: Option<u64>,
+    /// The big routes card is closed (it is open whenever the map is in Routes mode until it is closed).
+    pub(crate) routes_card_closed: bool,
+    /// Where along the selected route the pointer is on the profile (0 to 1); the map marks that spot.
+    pub(crate) route_hover: Option<f32>,
+    /// Which of [`routes::RADII`] the points of interest are looked for within, and whether they are left out.
+    pub(crate) route_radius: usize,
+    pub(crate) route_pois_off: bool,
+    /// The walk laid over the day: the start (minutes after midnight, local), the pace (index in `routes_light::PACES`),
+    /// whether the light is left out, and the walk worked out for what they and the day are now.
+    pub(crate) route_start: Option<u32>,
+    pub(crate) route_pace: Option<usize>,
+    pub(crate) route_light_off: bool,
+    route_track: Option<(routes_light::Key, Arc<routes_light::Track>)>,
     /// The directions the Sun or Moon reaches over the days the Find card looks through, and what they were worked out for
     /// (the body, the place, the first day, the number of days).
     /// The next date of each saved search, by what it was worked out for, and whether a check is running.
@@ -564,6 +611,9 @@ pub struct Runtime {
     /// The online place search: when the typing last changed, what was last asked, and the answer (from a thread).
     typed_at: f64,
     online_asked: String,
+    /// The text sent with Return (asks Nominatim too if Photon found nothing), and what was asked that way.
+    submitted: String,
+    submitted_asked: String,
     online: std::sync::Arc<std::sync::Mutex<Online>>,
     /// Coordinates being typed.
     coords: String,
@@ -608,12 +658,28 @@ pub struct Runtime {
     terrain_pending: Option<lineup::TerrainKey>,
     /// The skyline round the place (the mountains strip), the place being looked up, and where the strip looks.
     horizon: Option<horizon::Horizon>,
+    /// The Sun, Moon and core over that skyline for the day shown, with what it was worked out for.
+    /// Undo and redo of the pins.
+    pins: pin_history::PinHistory,
+    /// The transit picked in the satellites card, and the line on the ground it is seen from.
+    sat_pick: Option<(String, satellites::Target, f64)>,
+    sat_line: Option<((String, u64), Arc<Vec<(f64, f64)>>)>,
+    /// The stretches of direct sun at the pin over the terrain, with what they were worked out for.
+    lit_cache: Option<(LitKey, Arc<Vec<light_studio_astro::Span>>)>,
+    real_cache: Option<(RealKey, Arc<light_studio_astro::plan::RealDay>)>,
     horizon_pending: Option<horizon::HorizonKey>,
+    /// The aerial photo colours of the ground round the place (for the place), the place being looked up, and the panorama's colours and picture.
+    horizon_photo: Option<(horizon::HorizonKey, bool, Result<Arc<Vec<light_studio_astro::panorama::Photo>>, String>)>,
+    horizon_photo_pending: Option<(horizon::HorizonKey, bool)>,
+    pano_colours: Option<horizon::PanoColours>,
+    pano_texture: Option<horizon::PanoTexture>,
     pano_az: Option<f32>,
     pano_fov: f32,
     /// The ground heights for the shadow map, the place being looked up, and the picture drawn.
     shade_heights: Option<shade::Heights>,
-    shade_pending: Option<shade::ShadeKey>,
+    shade_pending: bool,
+    shade_serial: u64,
+    shade_want: Option<shade::Want>,
     shade_picture: Option<shade::Picture>,
     /// The site whose record is open (an index into `saved`).
     site_open: Option<usize>,
@@ -655,6 +721,11 @@ type YearKey = (u64, u64, i32, Option<i32>);
 enum Intent {
     /// Look for the points of interest noted on the phone.
     SyncPois,
+    /// Choose a GPX file and keep it as a route.
+    ImportRoute,
+    RouteWaypoints(u64),
+    /// Send a route to the phone (`true`: take it off instead).
+    RouteToPhone(u64, bool),
     /// Open the settings window.
     OpenSettings,
     UseMapCentre,
@@ -817,6 +888,75 @@ fn resolve(st: &PlannerState, now: f64) -> (Date, i32) {
     let date = Date::parse(&st.date).unwrap_or(today);
     let offset = st.utc_offset.unwrap_or_else(|| zone::offset_at(st.lat, st.lon, noon_of(date, st.lon)).0);
     (date, offset)
+}
+
+/// The line on the ground from which the picked satellite transit is seen (worked out once per pick).
+fn cached_sat_line(rt: &mut Runtime) -> Option<(Arc<Vec<(f64, f64)>>, satellites::Target, f64)> {
+    let (name, target, unix) = rt.sat_pick.clone()?;
+    let key = (name.clone(), unix.to_bits());
+    if let Some((k, v)) = rt.sat_line.as_ref().filter(|(k, _)| *k == key) {
+        let _ = k;
+        return Some((v.clone(), target, unix));
+    }
+    let orbits = rt.sats_orbits.as_ref().and_then(|(_, o)| o.as_ref().ok().cloned())?;
+    let orbit = orbits.iter().find(|o| o.name == name)?;
+    let line = Arc::new(satellites::transit_line(orbit, target, unix));
+    rt.sat_line = Some((key, line.clone()));
+    Some((line, target, unix))
+}
+
+/// What the direct-sun stretches were worked out for: the terrain grid, the day, the point.
+type LitKey = (u64, (u64, u64, i64, i32), u64, u64);
+
+/// The stretches of the day in which the Sun's direct light reaches the target (or the place, with no target), over the
+/// terrain of the shadows layer; `None` when that terrain has not been read or does not hold the point.
+fn cached_lit(rt: &mut Runtime, st: &PlannerState, c: &Computed) -> Option<Arc<Vec<light_studio_astro::Span>>> {
+    let heights = rt.shade_heights.as_ref()?;
+    let (serial, dem) = (heights.serial, heights.ground.as_ref().ok()?.clone());
+    let [lat, lon] = st.target.unwrap_or([st.lat, st.lon]);
+    let key: LitKey = (serial, c.key, lat.to_bits(), lon.to_bits());
+    if let Some((k, v)) = rt.lit_cache.as_ref().filter(|(k, _)| *k == key) {
+        let _ = k;
+        return Some(v.clone());
+    }
+    let (wx, wy) = crate::services::map_tiles::project(lat, lon);
+    let (x, y) = ((wx - dem.nw.0) / (dem.se.0 - dem.nw.0) * dem.width as f64, (wy - dem.nw.1) / (dem.se.1 - dem.nw.1) * dem.height as f64);
+    if !(x >= 0.5 && y >= 0.5 && x <= dem.width as f64 - 1.5 && y <= dem.height as f64 - 1.5) {
+        return None;
+    }
+    let obs = Observer::new(lat, lon);
+    let spans = light_studio_astro::shade::lit_spans(
+        &dem.heights,
+        dem.width,
+        dem.height,
+        dem.m_per_px,
+        x,
+        y,
+        &|t| light_studio_astro::sun_horizontal(t, obs),
+        c.start,
+        c.start + DAY,
+        600.0,
+    );
+    let spans = Arc::new(spans);
+    rt.lit_cache = Some((key, spans.clone()));
+    Some(spans)
+}
+
+/// What the real-skyline day was worked out for: the day (as `Computed::key`), the place's skyline and how complete it is.
+type RealKey = ((u64, u64, i64, i32), horizon::HorizonKey, bool);
+
+/// The Sun, Moon and core over the real skyline for the day shown, worked out again only when the day or the skyline change.
+fn cached_real(rt: &mut Runtime, st: &PlannerState, c: &Computed) -> Option<Arc<light_studio_astro::plan::RealDay>> {
+    let h = rt.horizon.as_ref().filter(|h| h.key == horizon::key_of(st))?;
+    let sky = h.data.as_ref().ok()?.clone();
+    let key: RealKey = (c.key, h.key, h.complete);
+    if let Some((k, r)) = rt.real_cache.as_ref().filter(|(k, _)| *k == key) {
+        let _ = k;
+        return Some(r.clone());
+    }
+    let real = Arc::new(light_studio_astro::plan::real_day(observer(st), c.start, &sky));
+    rt.real_cache = Some((key, real.clone()));
+    Some(real)
 }
 
 fn compute(st: &PlannerState, now: f64) -> Computed {
@@ -997,18 +1137,28 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     }
     lineup::fetch_terrain(app);
     horizon::fetch(app);
+    horizon::fetch_photo(app);
     shade::fetch(app);
     let mut intents: Vec<Intent> = Vec::new();
     let pal = palette(ui.visuals().dark_mode);
     let st = &mut app.ui.planner;
     let rt = &mut app.planner;
     let tiles = &mut app.map;
+    rt.pins.observe(pin_history::Pins::of(st));
     let place = if st.place.is_empty() { format!("{:.4}°, {:.4}°", st.lat, st.lon) } else { st.place.clone() };
+    let real = cached_real(rt, st, &c);
+    let lit = cached_lit(rt, st, &c);
+    let sat_line = cached_sat_line(rt);
+    let sky_mag = st.sky_mag.filter(|m| (m[0] - st.lat).abs() < 0.02 && (m[1] - st.lon).abs() < 0.03).map(|m| m[2]);
     let mut page = Page {
         rail_right: full.right() - 10.0,
         t,
         pal,
         c: &c,
+        real,
+        sky_mag,
+        lit,
+        sat_line,
         obs,
         minute,
         skies,
@@ -1055,8 +1205,11 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         let id = egui::Id::new("planner-time-grow");
         let prev: Rect = ctx.data(|d| d.get_temp(id)).unwrap_or(compact);
         let zone = prev.expand2(vec2(6.0, 8.0)).union(compact.expand2(vec2(8.0, 8.0)));
+        // (a calendar or menu opened from the grown bar keeps it grown while the pointer is over that popup)
+        let was_open = ctx.data(|d| d.get_temp::<f32>(egui::Id::new("planner-time-open-k"))).unwrap_or(0.0) > 0.5;
         let over = ctx.pointer_hover_pos().is_some_and(|q| zone.contains(q))
-            || ctx.input(|i| i.pointer.any_down() && i.pointer.press_origin().is_some_and(|q| zone.contains(q)));
+            || ctx.input(|i| i.pointer.any_down() && i.pointer.press_origin().is_some_and(|q| zone.contains(q)))
+            || (was_open && egui::Popup::is_any_open(&ctx));
         let a = ctx.animate_bool_with_time(egui::Id::new("planner-time-open"), over, crate::theme::motion(0.2));
         let w = ctx.animate_bool_with_time(egui::Id::new("planner-time-wide"), st.time_wide, crate::theme::motion(0.2));
         let ease = |x: f32| x * x * (3.0 - 2.0 * x);
@@ -1292,6 +1445,42 @@ fn apply(app: &mut App, ctx: &egui::Context, intent: Intent) {
             app.ui.planner.date = d.iso();
             app.ui.planner.minute = Some(m.clamp(0.0, 1439.0));
         }
+        Intent::ImportRoute => {
+            let Some(path) =
+                rfd::FileDialog::new().set_title(crate::i18n::tr("Import Route")).add_filter(crate::i18n::tr("GPX Route"), &["gpx"]).pick_file()
+            else {
+                return;
+            };
+            match routes::import_route(app, &path.to_string_lossy()) {
+                Ok(v) => {
+                    let name = v["name"].as_str().unwrap_or_default();
+                    app.toast(ctx, format!("{}: {name}", crate::i18n::tr("Imported route")));
+                }
+                Err(e) => app.toast_error(ctx, e),
+            }
+        }
+        Intent::RouteWaypoints(id) => match routes::waypoints_to_pois(&mut app.ui.planner, id) {
+            Ok(k) => {
+                let mut msg = if k.added == 1 {
+                    crate::i18n::tr("1 point of interest added").to_string()
+                } else {
+                    format!("{} {}", k.added, crate::i18n::tr("points of interest added"))
+                };
+                if k.existing > 0 {
+                    msg += &format!(" · {} {}", k.existing, crate::i18n::tr("already there"));
+                }
+                if k.full > 0 {
+                    msg += &format!(" · {} {}", k.full, crate::i18n::tr("left out: the list is full"));
+                }
+                app.toast(ctx, msg);
+            }
+            Err(e) => app.toast_error(ctx, e),
+        },
+        Intent::RouteToPhone(id, remove) => {
+            if let Err(e) = crate::pdi::send_route(app, id, remove) {
+                app.toast_error(ctx, e);
+            }
+        }
         Intent::OpenSite(i) => open_site(app, i),
         Intent::OpenUrl(url) => {
             if let Err(e) = crate::links::open(&url) {
@@ -1372,12 +1561,18 @@ fn run_search(app: &mut App, ctx: &egui::Context) {
         let on = app.planner.online.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         (on.for_query == q, on.running)
     };
+    // Return: the same text again, this time with the fallback service as well
+    if !running && app.planner.submitted == q && app.planner.submitted_asked != q {
+        app.planner.submitted_asked = q.clone();
+        start_online(app, &q, true);
+        return;
+    }
     if !ready && !running && q != app.planner.online_asked {
         let wait = 0.4 - (now - app.planner.typed_at);
         if wait > 0.0 {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
         } else {
-            start_online(app, &q);
+            start_online(app, &q, false);
         }
     }
     if running {
@@ -1399,7 +1594,7 @@ fn run_search(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-fn start_online(app: &mut App, q: &str) {
+fn start_online(app: &mut App, q: &str, submitted: bool) {
     app.planner.online_asked = q.to_string();
     app.planner.online.lock().unwrap_or_else(std::sync::PoisonError::into_inner).running = true;
     let shared = app.planner.online.clone();
@@ -1407,8 +1602,14 @@ fn start_online(app: &mut App, q: &str) {
     let spawned = std::thread::Builder::new().name("place-search".into()).spawn({
         let shared = shared.clone();
         move || {
-            let outcome = std::panic::catch_unwind(|| crate::services::geocode::search(&query, &lang, 8))
-                .unwrap_or_else(|_| Err("The place search stopped unexpectedly".to_string()));
+            let outcome = std::panic::catch_unwind(|| {
+                if submitted {
+                    crate::services::geocode::search_submitted(&query, &lang, 8)
+                } else {
+                    crate::services::geocode::search(&query, &lang, 8)
+                }
+            })
+            .unwrap_or_else(|_| Err("The place search stopped unexpectedly".to_string()));
             let mut on = shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             on.running = false;
             on.for_query = query;
@@ -1436,6 +1637,14 @@ struct Page<'a> {
     t: Tokens,
     pal: Pal,
     c: &'a Computed,
+    /// The bodies over the real skyline, when the terrain of the place has been read.
+    real: Option<Arc<light_studio_astro::plan::RealDay>>,
+    /// The sky's brightness given for the place shown (mag/arcsec²), for the outing index.
+    sky_mag: Option<f64>,
+    /// The stretches of direct sun at the pin over the terrain (when the shadows layer has read it).
+    lit: Option<Arc<Vec<light_studio_astro::Span>>>,
+    /// The picked satellite transit's line on the ground, the body it crosses and the moment.
+    sat_line: Option<(Arc<Vec<(f64, f64)>>, satellites::Target, f64)>,
     obs: Observer,
     minute: f64,
     skies: Skies,
@@ -1483,6 +1692,9 @@ impl Page<'_> {
             .show(&mut inner);
         if r.cancelled() {
             text.clear();
+        }
+        if r.returned() {
+            rt.submitted = text.trim().to_string();
         }
         rt.search = text;
         ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("planner-search-at"), field));
@@ -1750,7 +1962,23 @@ impl Page<'_> {
 
     // -- sun, moon, core --------------------------------------------------------------------
 
-    fn sun_card(&mut self, ui: &mut Ui) {
+    /// The Sun, Moon and core over the real skyline of this place, once the terrain has been read (Mountains view).
+    fn real_day(&self, _st: &PlannerState, _rt: &Runtime) -> Option<light_studio_astro::plan::RealDay> {
+        self.real.as_deref().cloned()
+    }
+
+    /// The rows "appears / disappears" (and the light lost) of one body over the skyline.
+    fn skyline_rows(&self, ui: &mut Ui, v: &light_studio_astro::plan::Visible, ids: [&str; 2], labels: [&str; 2], dot: Color32) {
+        let c = self.c;
+        subhead(ui, "Over the skyline");
+        let at = |v: Option<(f64, f64)>| v.map_or_else(|| "—".to_string(), |(t, az)| format!("{}  ·  {}", clock(t, c.offset), az_text(az)));
+        row(ui, ids[0], labels[0], &at(v.first), Some(dot));
+        row(ui, ids[1], labels[1], &at(v.last), Some(dot));
+        row(ui, "skyline:lost", "Visible time lost to the terrain", &hm(v.lost_min.max(0.0)), None);
+        note(ui, crate::i18n::tr("From the real skyline (ground heights; trees and buildings are not in it)."));
+    }
+
+    fn sun_card(&mut self, ui: &mut Ui, st: &PlannerState, rt: &Runtime) {
         let c = self.c;
         let s = &c.plan.sun;
         let pal = self.pal;
@@ -1772,6 +2000,25 @@ impl Page<'_> {
         row(ui, "sun:set", "Sunset", &with_az(s.set, s.set_az), Some(pal.sun));
         if let (Some(r), Some(sn)) = (s.rise, s.set) {
             row(ui, "sun:length", "Daylight", &hm((sn - r) / 60.0), None);
+        }
+        if let Some(real) = self.real_day(st, rt) {
+            self.skyline_rows(ui, &real.sun, ["sun:realRise", "sun:realSet"], ["Sun appears", "Sun disappears"], pal.sun);
+        }
+        if let Some(lit) = self.lit.clone() {
+            subhead(ui, if st.target.is_some() { "Direct sun at the target" } else { "Direct sun here" });
+            if lit.is_empty() {
+                note(ui, crate::i18n::tr("The terrain keeps the Sun off all day."));
+            }
+            let total: f64 = lit.iter().map(|s| (s.end - s.start) / 60.0).sum();
+            for (i, s) in lit.iter().enumerate().take(4) {
+                row(ui, &format!("sun:lit{i}"), "Sunlit", &format!("{} – {}", clock(s.start, c.offset), clock(s.end, c.offset)), Some(pal.sun));
+            }
+            if !lit.is_empty() {
+                row(ui, "sun:litTotal", "Hours of direct sun", &hm(total), None);
+            }
+            note(ui, crate::i18n::tr("From the terrain of the Shadows layer (ridges only; trees and buildings are not in it)."));
+        } else if !st.show_shadows {
+            note(ui, crate::i18n::tr("Turn on Shadows to see the hours of direct sun at the pin."));
         }
         subhead(ui, "Light");
         row(ui, "sun:goldenAm", "Golden Hour (morning)", &span(s.golden_am), Some(pal.golden));
@@ -1797,7 +2044,7 @@ impl Page<'_> {
         );
     }
 
-    fn moon_card(&mut self, ui: &mut Ui, st: &PlannerState) {
+    fn moon_card(&mut self, ui: &mut Ui, st: &PlannerState, rt: &Runtime) {
         let t = self.t;
         let c = self.c;
         let pal = self.pal;
@@ -1826,6 +2073,9 @@ impl Page<'_> {
         row(ui, "moon:rise", "Moonrise", &with_az(m.rise, m.rise_az), Some(pal.moon));
         row(ui, "moon:set", "Moonset", &with_az(m.set, m.set_az), Some(pal.moon));
         row(ui, "moon:transit", "Highest", &format!("{}  ·  {}", clock(m.transit, c.offset), alt_text(m.transit_alt)), Some(pal.moon));
+        if let Some(real) = self.real_day(st, rt) {
+            self.skyline_rows(ui, &real.moon, ["moon:realRise", "moon:realSet"], ["Moon appears", "Moon disappears"], pal.moon);
+        }
         subhead(ui, "Coming");
         let day = |t: Option<f64>| t.map_or_else(|| "—".to_string(), |t| short_date(Date::from_unix(t, c.offset)));
         row(ui, "moon:nextNew", "Next New Moon", &day(c.next_new), None);
@@ -1844,7 +2094,60 @@ impl Page<'_> {
         );
     }
 
-    fn core_card(&mut self, ui: &mut Ui) {
+    /// The outing index of the night starting this evening, with the clouds when the forecast covers it.
+    fn outing_rows(&self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime) {
+        use light_studio_astro::outing::{Limit, outing_index};
+        let c = self.c;
+        let night = light_studio_astro::plan::score_night(self.obs, c.start, 600.0);
+        let lit = moon_phase(c.start + DAY).illumination;
+        // the mean cloud cover over the hours the core is up in the dark, when the forecast for this place covers them
+        let key = ((st.lat * 100.0).round() as i32, (st.lon * 100.0).round() as i32);
+        let clouds = rt.clouds.as_ref().filter(|(k, ..)| *k == key).and_then(|(_, _, got)| got.as_ref().ok());
+        let cover = clouds.and_then(|f| {
+            let samples: Vec<f64> = c
+                .night_core
+                .iter()
+                .flat_map(|s| (0..=((s.end - s.start) / 3600.0).floor() as usize).map(move |i| s.start + i as f64 * 3600.0))
+                .filter_map(|t| f.at(t))
+                .collect();
+            (!samples.is_empty()).then(|| samples.iter().sum::<f64>() / samples.len() as f64)
+        });
+        // the sky's brightness given for this place (within about 2 km)
+        let near = |m: &[f64; 3]| (m[0] - st.lat).abs() < 0.02 && (m[1] - st.lon).abs() < 0.03;
+        let mag = st.sky_mag.filter(near).map(|m| m[2]);
+        let o = outing_index(&night, lit, cover, mag);
+        row(ui, "core:outing", "Outing index", &format!("{:.0} / 100", o.score), Some(self.pal.core));
+        let held = match o.limit {
+            Limit::Darkness => Some("The core is up in the dark for a short time"),
+            Limit::Moon => Some("The Moon is up while the core is"),
+            Limit::Height => Some("The core stays low"),
+            Limit::Pollution => Some("The sky is bright with artificial light here"),
+            Limit::Clouds => Some("Clouds (weather-model forecast)"),
+            Limit::None => None,
+        };
+        if let Some(h) = held {
+            note(ui, &format!("{}: {}", crate::i18n::tr("Held back by"), crate::i18n::tr(h).to_lowercase()));
+        }
+        // the sky's brightness at this place, in the photographer's own words (an SQM reading, or the atlas on the map)
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(crate::i18n::tr("Sky brightness (mag/arcsec²)")).font(self.t.font(11.5)).color(self.t.text_dim));
+            let mut v = mag.unwrap_or(21.0);
+            if number(ui, rt, "skyMag", &mut v, (16.0, 22.0), 1, 52.0) {
+                st.sky_mag = Some([st.lat, st.lon, v]);
+            }
+            if mag.is_some() && ui.small_button(crate::i18n::tr("Clear")).clicked() {
+                st.sky_mag = None;
+            }
+        });
+        if mag.is_none() {
+            note(ui, crate::i18n::tr("Without the sky's brightness: type it (22 pristine, 21 rural, 19–20 suburb) and the index counts it."));
+        }
+        if o.clouds.is_none() {
+            note(ui, crate::i18n::tr("Without the cloud forecast: it is asked for when Sky or Find opens; wait a moment."));
+        }
+    }
+
+    fn core_card(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime) {
         let c = self.c;
         let pal = self.pal;
         let k = &c.plan.core;
@@ -1855,7 +2158,11 @@ impl Page<'_> {
         row(ui, "core:rise", "Core Rises", &with_az(k.rise, k.rise_az), Some(pal.core));
         row(ui, "core:transit", "Core Highest", &format!("{}  ·  {}", clock(k.transit, c.offset), alt_text(k.transit_alt)), Some(pal.core));
         row(ui, "core:set", "Core Sets", &with_az(k.set, k.set_az), Some(pal.core));
+        if let Some(real) = self.real_day(st, rt) {
+            self.skyline_rows(ui, &real.core, ["core:realRise", "core:realSet"], ["Core appears", "Core disappears"], pal.core);
+        }
         subhead(ui, "Night starting this evening");
+        self.outing_rows(ui, st, rt);
         if c.night_core.is_empty() {
             note(
                 ui,
@@ -2324,6 +2631,81 @@ mod tests {
     }
 
     #[test]
+    fn the_sky_brightness_given_for_a_place_is_tamed_and_drawn() {
+        let mut st = PlannerState { sky_mag: Some([f64::NAN, 0.0, 21.0]), ..Default::default() };
+        st.sane();
+        assert_eq!(st.sky_mag, None);
+        st.sky_mag = Some([43.3, -2.0, 99.0]);
+        st.sane();
+        assert_eq!(st.sky_mag, Some([43.3, -2.0, 22.5]));
+        let mut app = new_app();
+        let (lat, lon) = (app.ui.planner.lat, app.ui.planner.lon);
+        app.ui.planner = PlannerState { placed: true, tab: Tab::Night, sky_mag: Some([lat, lon, 19.5]), ..app.ui.planner.clone() };
+        bigcard::open_only(&mut app.planner, bigcard::Card::Sky);
+        draw(&mut app, vec2(1000.0, 700.0));
+    }
+
+    #[test]
+    fn the_hours_of_sun_at_the_pin_follow_the_terrain_of_the_shadows_layer() {
+        let mut app = new_app();
+        app.ui.planner.show_shadows = true;
+        let (lat, lon) = (app.ui.planner.lat, app.ui.planner.lon);
+        let (cx, cy) = crate::services::map_tiles::project(lat, lon);
+        let (w, h) = (60usize, 60usize);
+        let half = 0.0005;
+        // flat ground at 200 m with a high wall just west of the pin
+        let mut heights = vec![200.0_f32; w * h];
+        for j in 0..h {
+            for i in 24..28 {
+                heights[j * w + i] = 3000.0;
+            }
+        }
+        app.planner.shade_heights = Some(shade::Heights {
+            serial: 1,
+            ideal: 12,
+            ground: Ok(Arc::new(crate::services::terrain_tiles::Dem {
+                width: w,
+                height: h,
+                heights,
+                nw: (cx - half, cy - half),
+                se: (cx + half, cy + half),
+                m_per_px: 5.0,
+            })),
+        });
+        draw(&mut app, vec2(1400.0, 900.0));
+        let (_, lit) = app.planner.lit_cache.clone().expect("the direct sun was worked out for the pin");
+        let total: f64 = lit.iter().map(|s| s.end - s.start).sum();
+        assert!(total > 0.0 && total < 12.0 * 3600.0, "a wall to the west leaves some sun and takes some: {total}");
+    }
+
+    #[test]
+    fn a_picked_satellite_transit_gets_its_line_on_the_map() {
+        use crate::services::satellites as sats;
+        let mut app = new_app();
+        let orbits = sats::parse(
+            "ISS (ZARYA)\n1 25544U 98067A   08264.51782528 -.00002182  00000-0 -11606-4 0  2927\n2 25544  51.6416 247.4627 0006703 130.5360 325.0288 15.72125391563537\n",
+        )
+        .unwrap();
+        let epoch = orbits[0].epoch;
+        app.planner.sats_orbits = Some((now_unix(), Ok(Arc::new(orbits))));
+        // a moment when the station is on the Sun's side of the Earth, found as the card's line does
+        let at = (0..2880)
+            .map(|m| epoch + f64::from(m) * 60.0)
+            .find(|t| {
+                satellites::transit_line(&app.planner.sats_orbits.as_ref().unwrap().1.as_ref().unwrap()[0], satellites::Target::Sun, *t).len() > 70
+            })
+            .unwrap();
+        app.planner.sat_pick = Some(("ISS (ZARYA)".into(), satellites::Target::Sun, at));
+        app.ui.planner.map_mode = MapMode::Planner;
+        draw(&mut app, vec2(1400.0, 900.0));
+        let (_, line) = app.planner.sat_line.clone().expect("the line was worked out");
+        assert!(line.len() > 70);
+        // a pick that is not in the orbits draws nothing and does not fail
+        app.planner.sat_pick = Some(("NOT A SATELLITE".into(), satellites::Target::Moon, at));
+        draw(&mut app, vec2(1400.0, 900.0));
+    }
+
+    #[test]
     fn the_find_map_takes_the_whole_card_and_gives_it_back() {
         let mut app = new_app();
         app.ui.planner.placed = true;
@@ -2334,6 +2716,62 @@ mod tests {
         }
         app.planner.find_map_big = false;
         draw(&mut app, vec2(1400.0, 900.0));
+    }
+
+    #[test]
+    fn the_routes_mode_draws_the_card_the_profile_and_the_line_at_any_size() {
+        let gpx = r#"<gpx><wpt lat="43.3205" lon="-1.9505"><name>Mirador</name></wpt><trk><name>Ulia</name><trkseg>
+            <trkpt lat="43.3200" lon="-1.9500"><ele>10</ele></trkpt><trkpt lat="43.3210" lon="-1.9510"><ele>40</ele></trkpt>
+            <trkpt lat="43.3220" lon="-1.9500"><ele>25</ele></trkpt></trkseg></trk></gpx>"#;
+        let dir = std::env::temp_dir().join(format!("ls-routes-draw-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("ulia.gpx");
+        std::fs::write(&file, gpx).unwrap();
+        let mut app = new_app();
+        app.ui.planner.placed = true;
+        let v = routes::import_route(&mut app, &file.to_string_lossy()).unwrap();
+        assert_eq!(v["name"], "Ulia");
+        assert_eq!(app.ui.planner.map_mode, MapMode::Routes);
+        for size in [vec2(300.0, 400.0), vec2(1000.0, 700.0), vec2(1900.0, 1000.0)] {
+            app.planner.routes_card_closed = false;
+            draw(&mut app, size);
+            app.planner.routes_card_closed = true;
+            draw(&mut app, size);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_real_skyline_day_is_drawn_and_kept_until_something_changes() {
+        let mut app = new_app();
+        app.ui.planner.map_mode = MapMode::Planner;
+        let sky = light_studio_astro::horizon::Skyline {
+            near: 500.0,
+            far: 60_000.0,
+            ground: 0.0,
+            alt: vec![8.0; 120],
+            dist: vec![1000.0; 120],
+            height: vec![0.0; 120],
+        };
+        app.planner.horizon = Some(horizon::Horizon {
+            key: horizon::key_of(&app.ui.planner),
+            data: Ok(Arc::new(sky)),
+            names: Arc::new(Vec::new()),
+            fine: false,
+            names_error: None,
+            surface: None,
+            complete: true,
+            detail: false,
+        });
+        draw(&mut app, vec2(1400.0, 900.0));
+        let (key, real) = app.planner.real_cache.clone().expect("the day over the skyline was worked out");
+        let flat = app.planner.computed.clone().expect("the day").plan.sun.rise;
+        if let (Some(flat), Some((appears, _))) = (flat, real.sun.first) {
+            assert!(appears > flat + 600.0, "an 8° skyline delays the Sun's appearing");
+        }
+        // drawing again keeps the same work
+        draw(&mut app, vec2(1400.0, 900.0));
+        assert_eq!(app.planner.real_cache.as_ref().map(|(k, _)| *k), Some(key));
     }
 
     #[test]

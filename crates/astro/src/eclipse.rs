@@ -1,7 +1,8 @@
 //! Eclipses seen from a place: lunar ones with the times of their contacts, solar ones with the
 //! magnitude and obscuration at the observer.
 //!
-//! The method is the textbook geometry, not a besselian solution: the Moon against the Earth's
+//! The local circumstances use the textbook geometry, not a besselian solution (the track over the Earth does: see
+//! [`crate::besselian`]): the Moon against the Earth's
 //! shadow (Danjon's enlargement of 1.02 on the shadow radii) for the lunar ones, and the
 //! topocentric separation of the Sun and Moon discs for the solar ones. Good to a couple of
 //! minutes and a few hundredths of magnitude: enough to plan, not to publish.
@@ -292,12 +293,22 @@ pub struct PathPoint {
     pub unix: f64,
     pub lat: f64,
     pub lon: f64,
-    /// Half the width of the umbra on the ground, km: positive for totality, negative for an annular eclipse.
+    /// Half the width of the umbra on the ground, km, across the track and stretched by the slant: positive for totality,
+    /// negative for an annular eclipse.
     pub half_width_km: f64,
-    /// The radius of the penumbra across the track, km: the edge of the partial eclipse (not stretched by the slant, so only a guide).
+    /// The radius of the penumbra across the axis, km: the edge of the partial eclipse (not stretched by the slant, so only a guide).
     pub penumbra_km: f64,
     /// The Sun's altitude there, degrees.
     pub sun_alt: f64,
+    /// How long the total (or annular) phase lasts for someone on the central line here, seconds.
+    pub duration_s: f64,
+    /// The ratio of the Moon's to the Sun's apparent diameter on the central line here (the magnitude NASA lists for
+    /// a central eclipse: above 1 for totality, below for an annular eclipse).
+    pub magnitude: f64,
+    /// The path's two limits across the track here, as (latitude, longitude): to the left and to the right of the
+    /// direction the shadow travels.
+    pub left: (f64, f64),
+    pub right: (f64, f64),
 }
 
 /// The track of the Moon's shadow axis over the Earth round a new moon.
@@ -308,10 +319,8 @@ pub struct EclipsePath {
     pub greatest: usize,
 }
 
-const EARTH_KM: f64 = 6_371.0;
 const EQUATORIAL_KM: f64 = 6_378.14;
 const MOON_KM: f64 = 1_737.4;
-const SUN_KM: f64 = 695_700.0;
 /// The Sun's radius for its disc as eclipse predictions take it (959.63 arcseconds at one AU).
 const SUN_DISC_KM: f64 = 696_000.0;
 /// Eclipse predictions shrink the Moon a little for totality and annularity, so the valleys of its limb let some light
@@ -327,53 +336,11 @@ fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-/// Where the Moon's shadow axis crosses the Earth every two minutes within three and a half hours of a new moon
-/// (the Earth taken as a sphere, then the latitude made geodetic: tens of kilometres at worst). Empty when the
-/// axis misses the Earth. Only the sunlit part (the Sun above the horizon) is kept.
+/// Where the Moon's shadow axis crosses the Earth every two minutes within three and a half hours of a new moon,
+/// worked out from the Besselian elements on the oblate Earth (see [`crate::besselian`]). Empty when the axis misses
+/// the Earth. Only the sunlit part (the Sun above the horizon) is kept.
 pub fn solar_path(new_moon: f64) -> Option<EclipsePath> {
-    if !new_moon.is_finite() {
-        return None;
-    }
-    let mut points = Vec::new();
-    let mut gamma = Vec::new();
-    let steps = (7.0 * 3600.0 / 120.0) as i32;
-    for i in 0..=steps {
-        let t = new_moon - 3.5 * 3600.0 + f64::from(i) * 120.0;
-        let jd = jd_from_unix(t);
-        let (m, s) = (moon_coords(jd), sun_coords(jd));
-        let mv = vector(m.ra, m.dec, m.dist_km);
-        let sv = vector(s.ra, s.dec, s.dist_km);
-        let axis = [mv[0] - sv[0], mv[1] - sv[1], mv[2] - sv[2]];
-        let len = dot(axis, axis).sqrt();
-        if len <= 0.0 {
-            continue;
-        }
-        let d = [axis[0] / len, axis[1] / len, axis[2] / len];
-        let md = dot(mv, d);
-        let disc = md * md - (dot(mv, mv) - EARTH_KM * EARTH_KM);
-        if disc < 0.0 {
-            continue;
-        }
-        let along = -md - disc.sqrt();
-        let p = [mv[0] + along * d[0], mv[1] + along * d[1], mv[2] + along * d[2]];
-        let lat_c = (p[2] / EARTH_KM).clamp(-1.0, 1.0).asin();
-        let lat = (lat_c.tan() / (1.0 - 1.0 / 298.257_f64).powi(2)).atan().to_degrees();
-        let lon = ((p[1].atan2(p[0]).to_degrees() - crate::sun::gmst(jd)) + 540.0).rem_euclid(360.0) - 180.0;
-        let alpha = ((SUN_KM - MOON_KM) / len).clamp(-1.0, 1.0).asin();
-        let r = MOON_KM - along * alpha.tan();
-        let beta = ((SUN_KM + MOON_KM) / len).clamp(-1.0, 1.0).asin();
-        let rp = MOON_KM + along.abs() * beta.tan();
-        let cos_i = (-dot(p, d) / EARTH_KM).abs().max(0.1);
-        let sun_alt = sun_horizontal(t, Observer::new(lat, lon)).alt;
-        // how far the axis passes from the Earth's centre, for the greatest eclipse
-        let miss = (dot(mv, mv) - md * md).max(0.0).sqrt();
-        if sun_alt > 0.0 {
-            points.push(PathPoint { unix: t, lat, lon, half_width_km: r / cos_i, penumbra_km: rp, sun_alt });
-            gamma.push(miss);
-        }
-    }
-    let greatest = gamma.iter().enumerate().min_by(|a, b| a.1.total_cmp(b.1)).map(|(i, _)| i)?;
-    (points.len() >= 2).then_some(EclipsePath { points, greatest })
+    crate::besselian::track(new_moon)
 }
 
 #[cfg(test)]

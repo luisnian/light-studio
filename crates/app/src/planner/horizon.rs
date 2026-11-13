@@ -4,6 +4,7 @@
 //! on it takes the map's place (the whole free part), as a panorama is only of use big.
 
 use light_studio_astro::horizon::{self, Skyline};
+use light_studio_astro::panorama::{Photo, Surface, View as PanoView};
 
 use super::*;
 
@@ -21,7 +22,29 @@ pub(super) struct Horizon {
     pub names_error: Option<String>,
     /// Whether the skyline is the fine one (terrain tiles) and not the coarse web lookup.
     pub fine: bool,
+    /// The ground all round, to draw the panorama in colour (only with the fine terrain).
+    pub surface: Option<Arc<Surface>>,
+    /// Whether this is the whole 60 km look (`false`: the quick one, 15 km, shown while the whole one is read).
+    pub complete: bool,
+    /// Whether the ground near the place comes from the finer terrain (Mapterhorn).
+    pub detail: bool,
 }
+
+/// The colour of every sample of the ground, for the Sun's place and the photo it was made with (the place, whether a
+/// photo was used, the Sun's direction to half a degree).
+pub(super) struct PanoColours {
+    pub key: (HorizonKey, bool, i64, i64, usize),
+    pub colours: Arc<Vec<[u8; 3]>>,
+}
+
+/// The panorama as a picture, and what it was drawn for.
+pub(super) struct PanoTexture {
+    pub key: ((HorizonKey, bool, i64, i64, usize), u32, u32, u32, u32, usize, usize),
+    pub tex: egui::TextureHandle,
+}
+
+/// The widest the panorama's picture is drawn (pixels).
+const PANO_MAX_W: usize = 1800;
 
 /// A named summit as seen from the place.
 #[derive(Clone, Debug, PartialEq)]
@@ -68,27 +91,71 @@ pub(super) fn view_rect(free: Rect) -> Rect {
     if r.width() > 0.0 && r.height() > 0.0 { r } else { Rect::from_min_size(r.min, vec2(0.0, 0.0)) }
 }
 
-/// Starts the ground heights round the place when the strip is on and they are not at hand (on a worker thread).
+/// The sampling the ground heights are kept under, by terrain source: with the finer terrain near the place, or the AWS
+/// tiles alone.
+const TAG_FINE: &str = "mh";
+const TAG_AWS: &str = "aws";
+
+fn heights_tag(source: &str, grid: horizon::Grid) -> String {
+    format!("{source}{}x{}", grid.azimuths, grid.rings)
+}
+
+/// The ground heights of `grid` round a place and whether the finer terrain is in them: kept from before, else read
+/// from the terrain tiles (and kept, for the whole look only: the quick one is cheap and only a stop on the way).
+fn read_heights(grid: horizon::Grid, lat: f64, lon: f64, keep: bool) -> Result<(Vec<f64>, bool), String> {
+    use crate::services::place_cache as kept;
+    if keep {
+        if let Some(h) = kept::load_heights(&heights_tag(TAG_FINE, grid), lat, lon, grid.points()) {
+            return Ok((h, true));
+        }
+        // (kept without the finer terrain: used while it cannot be had, else read again with it)
+        if crate::services::terrain_fine::given_up()
+            && let Some(h) = kept::load_heights(&heights_tag(TAG_AWS, grid), lat, lon, grid.points())
+        {
+            return Ok((h, false));
+        }
+    }
+    let (h, detail) = crate::services::terrain::heights_detailed(&grid.sample_points(lat, lon))?;
+    if keep {
+        kept::store_heights(&heights_tag(if detail { TAG_FINE } else { TAG_AWS }, grid), lat, lon, &h);
+    }
+    Ok((h, detail))
+}
+
+/// Starts the ground heights round the place when the strip is on and they are not at hand (on a worker thread). A place
+/// not seen before first gets a quick look (15 km, few tiles) and then the whole one (60 km); one seen before opens at
+/// once from what was kept.
 pub(super) fn fetch(app: &mut App) {
     let st = &app.ui.planner;
     if !st.show_horizon {
         return;
     }
     let key = key_of(st);
-    if app.planner.horizon.as_ref().is_some_and(|h| h.key == key) || app.planner.horizon_pending == Some(key) {
+    if app.planner.horizon.as_ref().is_some_and(|h| h.key == key && h.complete) || app.planner.horizon_pending == Some(key) {
         return;
     }
     let (lat, lon) = (st.lat, st.lon);
+    // the quick look only for a place with nothing kept, and only once
+    let quick = app.planner.horizon.as_ref().is_none_or(|h| h.key != key)
+        && [TAG_FINE, TAG_AWS]
+            .iter()
+            .all(|t| !crate::services::place_cache::has_heights(&heights_tag(t, horizon::Grid::FINE), lat, lon, horizon::Grid::FINE.points()));
     app.planner.horizon_pending = Some(key);
     let started = crate::tasks::spawn(
         app,
         "Mountains",
         Some("download"),
-        move || -> Result<(Arc<Skyline>, Arc<Vec<Named>>, bool, Option<String>), String> {
+        move || -> Result<(Arc<Skyline>, Arc<Vec<Named>>, bool, Option<String>, Option<Arc<Surface>>, bool), String> {
             // the fine skyline from the terrain tiles; without them (offline, no tiles kept), the coarse one from the web service
-            let fine = horizon::Grid::FINE;
-            let from_tiles = match crate::services::terrain::heights(&fine.sample_points(lat, lon)) {
-                Ok(h) => horizon::skyline_for(fine, &h),
+            let grid = if quick { horizon::Grid::QUICK } else { horizon::Grid::FINE };
+            let mut surface: Option<Arc<Surface>> = None;
+            let mut detail = false;
+            let from_tiles = match read_heights(grid, lat, lon, !quick) {
+                Ok((h, d)) => {
+                    detail = d;
+                    surface = Surface::new(grid, &h).map(Arc::new);
+                    horizon::skyline_for(grid, &h)
+                }
                 Err(e) => {
                     log::warn!("mountains: terrain tiles: {e}");
                     None
@@ -112,25 +179,139 @@ pub(super) fn fetch(app: &mut App) {
                     Vec::new()
                 }
             };
-            Ok((Arc::new(sky), Arc::new(names), is_fine, names_error))
+            Ok((Arc::new(sky), Arc::new(names), is_fine, names_error, surface, detail))
         },
         move |app, _ctx, data| {
             if app.planner.horizon_pending == Some(key) {
                 app.planner.horizon_pending = None;
             }
+            // (the quick look is not the end of it when the tiles were there; a failure is final, so it is not tried again and again)
             app.planner.horizon = Some(match data {
-                Ok((sky, names, fine, names_error)) => Horizon { key, data: Ok(sky), names, fine, names_error },
-                Err(e) => Horizon { key, data: Err(e), names: Arc::new(Vec::new()), fine: false, names_error: None },
+                Ok((sky, names, fine, names_error, surface, detail)) => {
+                    let complete = !(quick && fine);
+                    Horizon { key, data: Ok(sky), names, fine, names_error, surface, complete, detail }
+                }
+                Err(e) => Horizon {
+                    key,
+                    data: Err(e),
+                    names: Arc::new(Vec::new()),
+                    fine: false,
+                    names_error: None,
+                    surface: None,
+                    complete: true,
+                    detail: false,
+                },
             });
         },
     );
     if let Err(e) = started {
         app.planner.horizon_pending = None;
-        app.planner.horizon = Some(Horizon { key, data: Err(e), names: Arc::new(Vec::new()), fine: false, names_error: None });
+        app.planner.horizon = Some(Horizon {
+            key,
+            data: Err(e),
+            names: Arc::new(Vec::new()),
+            fine: false,
+            names_error: None,
+            surface: None,
+            complete: true,
+            detail: false,
+        });
+    }
+}
+
+/// Starts the aerial photo colours of the ground round the place, once the ground is there (on a worker thread). The
+/// quick ground gets its own, smaller photo, so colour shows early too.
+pub(super) fn fetch_photo(app: &mut App) {
+    let st = &app.ui.planner;
+    if !st.show_horizon {
+        return;
+    }
+    let key = key_of(st);
+    let Some(h) = app.planner.horizon.as_ref().filter(|h| h.key == key && h.surface.is_some()) else {
+        return;
+    };
+    let complete = h.complete;
+    if app.planner.horizon_photo.as_ref().is_some_and(|p| p.0 == key && p.1 == complete) || app.planner.horizon_photo_pending == Some((key, complete))
+    {
+        return;
+    }
+    let (lat, lon) = (st.lat, st.lon);
+    app.planner.horizon_photo_pending = Some((key, complete));
+    let started = crate::tasks::spawn(
+        app,
+        "Mountains colour",
+        Some("download"),
+        move || -> Result<Arc<Vec<Photo>>, String> {
+            let grid = if complete { horizon::Grid::FINE } else { horizon::Grid::QUICK };
+            let tag = format!("{}{}x{}", crate::services::ortho::source(lat, lon).1, grid.azimuths, grid.rings);
+            let count = grid.azimuths * grid.rings;
+            if let Some(p) = crate::services::place_cache::load_photo(&tag, lat, lon, count) {
+                return Ok(Arc::new(p));
+            }
+            let points = grid.sample_points(lat, lon);
+            let samples = points.get(1..).ok_or("no samples")?;
+            let p = crate::services::ortho::photo(lat, lon, samples, grid.rings, &grid.ranges())?;
+            // (a picture with gaps is not kept: the missing tiles may come next time)
+            if complete && p.iter().all(|c| c[3] == 255) {
+                crate::services::place_cache::store_photo(&tag, lat, lon, &p);
+            }
+            Ok(Arc::new(p))
+        },
+        move |app, _ctx, photo| {
+            if app.planner.horizon_photo_pending == Some((key, complete)) {
+                app.planner.horizon_photo_pending = None;
+            }
+            app.planner.horizon_photo = Some((key, complete, photo));
+        },
+    );
+    if let Err(e) = started {
+        app.planner.horizon_photo_pending = None;
+        app.planner.horizon_photo = Some((key, complete, Err(e)));
     }
 }
 
 /// The sky's colour for the Sun at `alt` degrees: night, dusk, day.
+/// One soft round patch of the Milky Way's glow: where, how wide (degrees) and what colour.
+pub(super) struct Blob {
+    pub az: f64,
+    pub alt: f64,
+    pub radius: f32,
+    pub colour: Color32,
+}
+
+/// The glow of the galactic plane as overlapping faint patches along it: wide and warm at the core, narrower and cooler
+/// away from it, a brighter thin band down the middle. `dark` is 0 (twilight, nothing) to 1 (a dark sky).
+pub(super) fn milky_way_blobs(plane: &[light_studio_astro::sky::PlanePoint], dark: f32) -> Vec<Blob> {
+    if dark <= 0.0 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for p in plane.iter().filter(|p| p.at.alt > -8.0 && p.at.alt.is_finite() && p.at.az.is_finite()) {
+        let away = (p.l + 180.0).rem_euclid(360.0) - 180.0;
+        let k = (1.0 - (away.abs() / 180.0) as f32).clamp(0.0, 1.0);
+        let warm = k * k;
+        let tint = |cool: [u8; 3], hot: [u8; 3]| -> [u8; 3] {
+            std::array::from_fn(|i| (f32::from(cool[i]) * (1.0 - warm) + f32::from(hot[i]) * warm) as u8)
+        };
+        let rgb = tint([185, 200, 255], [255, 226, 180]);
+        let alpha = |a: f32| (a * dark).round().clamp(0.0, 255.0) as u8;
+        // the wide halo, then the brighter thin band
+        out.push(Blob {
+            az: p.at.az,
+            alt: p.at.alt,
+            radius: 5.0 + 6.0 * warm,
+            colour: Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], alpha(6.0 + 3.0 * warm)),
+        });
+        out.push(Blob {
+            az: p.at.az,
+            alt: p.at.alt,
+            radius: 2.2 + 2.5 * warm,
+            colour: Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], alpha(5.0 + 5.0 * warm)),
+        });
+    }
+    out
+}
+
 pub(super) fn sky_colours(sun_alt: f64, dark_ui: bool) -> (Color32, Color32) {
     let k = ((sun_alt + 14.0) / 20.0).clamp(0.0, 1.0) as f32;
     let night = (Color32::from_rgb(8, 12, 28), Color32::from_rgb(26, 36, 66));
@@ -186,6 +367,66 @@ impl Page<'_> {
         p.circle_stroke(pos2(x, track.center().y), 8.0, egui::Stroke::new(1.5, t.accent));
         p.text(pos2(r.left() + 6.0, track.center().y), Align2::LEFT_CENTER, clock_minutes(self.minute), t.semibold(11.5), t.text);
     }
+
+    /// The panorama's picture for the view the strip shows: the ground in colour for the Sun where it is, drawn from the
+    /// place's samples. Kept while nothing it depends on changes. `None` if it cannot be drawn.
+    #[allow(clippy::too_many_arguments)]
+    fn pano_picture(
+        &self,
+        ctx: &egui::Context,
+        rt: &mut Runtime,
+        key: HorizonKey,
+        surf: &Surface,
+        inner: Rect,
+        centre: f32,
+        fov: f32,
+        sy: f32,
+        y0: f32,
+        haze: Color32,
+    ) -> Option<egui::TextureId> {
+        let sun = self.skies.sun;
+        let complete = surf.grid().rings == horizon::Grid::FINE.rings;
+        let photo = rt.horizon_photo.as_ref().filter(|p| p.0 == key && p.1 == complete).and_then(|p| p.2.as_ref().ok()).cloned();
+        // (the quick and the whole ground have their own colours: the number of rings tells them apart)
+        let ckey = (key, photo.is_some(), (sun.az * 2.0).round() as i64, (sun.alt * 2.0).round() as i64, surf.grid().rings);
+        if rt.pano_colours.as_ref().is_none_or(|c| c.key != ckey) {
+            let colours = surf.colours(sun, photo.as_deref().map(Vec::as_slice), [haze.r(), haze.g(), haze.b()]);
+            rt.pano_colours = Some(PanoColours { key: ckey, colours: Arc::new(colours) });
+        }
+        let colours = Arc::clone(&rt.pano_colours.as_ref()?.colours);
+        // one picture pixel to a screen pixel, up to a cap on the width
+        let w = ((inner.width() * ctx.pixels_per_point()) as usize).clamp(16, PANO_MAX_W);
+        let scale = w as f32 / inner.width().max(1.0);
+        let h = ((inner.height() * scale) as usize).clamp(16, 4096);
+        let tkey = (ckey, centre.to_bits(), fov.to_bits(), sy.to_bits(), y0.to_bits(), w, h);
+        if rt.pano_texture.as_ref().is_none_or(|t| t.key != tkey) {
+            let view = PanoView {
+                width: w,
+                height: h,
+                az_left: f64::from(centre) - f64::from(fov) / 2.0,
+                deg_x: f64::from(fov) / w as f64,
+                alt_top: f64::from(y0 - inner.top()) / f64::from(sy),
+                deg_y: 1.0 / (f64::from(sy) * f64::from(scale)),
+            };
+            let rgba = surf.render(&colours, &view);
+            if rgba.is_empty() {
+                return None;
+            }
+            let tex = ctx.load_texture(
+                "planner-panorama",
+                egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba),
+                egui::TextureOptions {
+                    magnification: egui::TextureFilter::Linear,
+                    minification: egui::TextureFilter::Linear,
+                    wrap_mode: egui::TextureWrapMode::ClampToEdge,
+                    mipmap_mode: None,
+                },
+            );
+            rt.pano_texture = Some(PanoTexture { key: tkey, tex });
+        }
+        rt.pano_texture.as_ref().map(|t| t.tex.id())
+    }
+
     pub(super) fn horizon_strip(&mut self, ui: &mut Ui, st: &mut PlannerState, rt: &mut Runtime, r: Rect) {
         let t = self.t;
         let pal = self.pal;
@@ -243,8 +484,30 @@ impl Page<'_> {
             inner.bottom() - 6.0 - (-(data.as_ref().map_or(0.0, |s| s.alt.iter().copied().fold(f64::MAX, f64::min).min(0.0)) as f32) * sy).min(14.0);
         let y_of = |alt: f64| y0 - alt as f32 * sy;
 
-        // the ground, a column at a time, paler the farther the ridge
-        if let Some(s) = &data {
+        // the Milky Way: a soft band along the galactic plane in a dark sky, behind the ground
+        if st.layers[2] {
+            let dark = ((-sun_alt - 8.0) / 10.0).clamp(0.0, 1.0) as f32;
+            if dark > 0.0 {
+                let plane = light_studio_astro::sky::milky_way_plane(self.c.start + self.minute * 60.0, self.obs, 2.0);
+                let unit = (ppd * sy).sqrt();
+                for b in milky_way_blobs(&plane, dark) {
+                    let p = pos2(x_of(b.az), y_of(b.alt));
+                    let r = (b.radius * unit).max(1.0);
+                    if inner.expand(r).contains(p) {
+                        painter_sky.circle_filled(p, r, b.colour);
+                    }
+                }
+            }
+        }
+
+        // the ground: in colour (relief lit by the Sun, aerial photo, haze) when the fine terrain is there, else a silhouette
+        let picture = sky
+            .as_ref()
+            .and_then(|h| h.surface.clone())
+            .and_then(|surf| self.pano_picture(ui.ctx(), rt, key, &surf, inner, centre, fov, sy, y0, low));
+        if let Some(tex) = picture {
+            painter.image(tex, inner, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        } else if let Some(s) = &data {
             let mut mesh = egui::Mesh::default();
             let mut x = inner.left();
             while x < inner.right() {
@@ -358,11 +621,24 @@ impl Page<'_> {
             }
             // the credits
             let fine = sky.as_ref().is_some_and(|h| h.fine);
-            let mut credit = String::from(if fine { "Terrain: AWS Terrain Tiles" } else { "Terrain: Copernicus DEM (Open-Meteo)" });
+            let detail = sky.as_ref().is_some_and(|h| h.detail);
+            let mut credit = String::from(match (fine, detail) {
+                (true, true) => "Terrain: © Mapterhorn · AWS Terrain Tiles",
+                (true, false) => "Terrain: AWS Terrain Tiles",
+                _ => "Terrain: Copernicus DEM (Open-Meteo)",
+            });
             if !names.is_empty() {
                 credit.push_str(" · Names: © OpenStreetMap contributors");
             } else if let Some(why) = sky.as_ref().and_then(|h| h.names_error.as_deref()) {
                 credit.push_str(&format!(" · {}: {why}", crate::i18n::tr("Summit names unavailable")));
+            }
+            if sky.as_ref().is_some_and(|h| h.surface.is_some()) {
+                let complete = sky.as_ref().is_some_and(|h| h.complete);
+                match rt.horizon_photo.as_ref().filter(|p| p.0 == key && p.1 == complete).map(|p| &p.2) {
+                    Some(Ok(_)) => credit.push_str(&format!(" · {}", crate::services::ortho::source(st.lat, st.lon).2)),
+                    Some(Err(e)) => credit.push_str(&format!(" · {}: {e}", crate::i18n::tr("Photo colours unavailable"))),
+                    None => credit.push_str(&format!(" · {}", crate::i18n::tr("Loading photo colours…"))),
+                }
             }
             let g = painter.layout_no_wrap(credit, t.font(9.5), Color32::from_white_alpha(150));
             painter.galley(pos2(inner.left() + 8.0, inner.bottom() - g.size().y - 3.0), g, Color32::WHITE);
@@ -398,6 +674,25 @@ impl Page<'_> {
                 painter.circle_filled(p, rad + 4.0, color.gamma_multiply(0.25));
                 painter.circle_filled(p, rad, color);
             }
+        }
+
+        // the core below the horizon: said where it will come up, so a missing dot is not taken for a fault
+        let core = self.skies.core;
+        if st.layers[2] && core.alt < -4.0 && ((core.az as f32 - centre + 540.0).rem_euclid(360.0) - 180.0).abs() < fov / 2.0 {
+            let x = x_of(core.az).clamp(inner.left() + 8.0, inner.right() - 8.0);
+            let mut text = crate::i18n::tr("Milky Way core below the horizon").to_string();
+            if let Some(rise) = self.c.plan.core.rise {
+                text.push_str(&format!(" · {} {}", crate::i18n::tr("Core Rises"), clock(rise, self.c.offset)));
+            }
+            let g = painter.layout_no_wrap(text, t.font(10.5), Color32::WHITE);
+            let size = g.size() + vec2(16.0, 8.0);
+            let chip = Rect::from_center_size(
+                pos2(x.clamp(inner.left() + size.x / 2.0 + 4.0, inner.right() - size.x / 2.0 - 4.0), inner.top() + 16.0),
+                size,
+            );
+            painter.rect_filled(chip, 8.0, Color32::from_black_alpha(150));
+            painter.galley(chip.center() - g.size() / 2.0, g, Color32::WHITE);
+            painter.circle_stroke(pos2(x, y0), 6.0, Stroke::new(1.8, pal.core));
         }
 
         // the compass strip
@@ -513,6 +808,29 @@ impl Page<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_milky_way_glow_is_widest_and_warmest_at_the_core_and_needs_a_dark_sky() {
+        use light_studio_astro::{Horizontal, sky::PlanePoint};
+        let plane: Vec<PlanePoint> = [0.0, 90.0, 180.0, 270.0]
+            .iter()
+            .map(|&l| PlanePoint { l, at: Horizontal { az: 180.0 + l / 4.0, alt: 20.0 } })
+            .chain([PlanePoint { l: 45.0, at: Horizontal { az: 10.0, alt: -30.0 } }])
+            .collect();
+        assert!(milky_way_blobs(&plane, 0.0).is_empty(), "no glow in the twilight");
+        let blobs = milky_way_blobs(&plane, 1.0);
+        // two patches for each of the four points above the horizon; the one far below it is left out
+        assert_eq!(blobs.len(), 8);
+        let core = &blobs[0];
+        assert!(blobs.iter().all(|b| b.radius <= core.radius));
+        let rgba = |b: &Blob| b.colour.to_srgba_unmultiplied();
+        assert!(rgba(core)[0] > 240 && rgba(core)[2] < 200, "warm at the core: {:?}", rgba(core));
+        let far = &blobs[4]; // l = 180: the opposite side of the galaxy
+        assert!(far.radius < core.radius && rgba(far)[2] > rgba(far)[0] - 10, "cool far from it: {:?}", rgba(far));
+        // a fainter sky shows a fainter glow
+        let dim = milky_way_blobs(&plane, 0.4);
+        assert!(dim[0].colour.a() < core.colour.a(), "{} vs {}", dim[0].colour.a(), core.colour.a());
+    }
 
     #[test]
     fn the_three_new_layers_start_off_are_kept_and_old_settings_still_load() {

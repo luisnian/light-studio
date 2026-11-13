@@ -43,6 +43,7 @@ BASE=http://localhost:8799 npm test            # en otra terminal
 | `POST /sync/ack` `{device,cursor}` | Guarda el último cursor del dispositivo. |
 | `PUT /attachments?poi=<uuid>&att=<uuid>` | Foto cruda (jpeg/png/webp ≤10 MB) → R2 `poi/<id>/<att>.<ext>`. Repetirla es inocuo. |
 | `GET /attachments/<key>` | Descarga (autenticada). |
+| `POST /routes` · `GET /routes` · `GET /routes/<id>` · `POST /routes/delete` `{id}` | Rutas que Light Studio envía al móvil (línea, waypoints y cifras; enviar de nuevo con el mismo `id` la sustituye). La PWA las descarga al sincronizar. |
 | `POST /auth/passkey/register/options` · `POST /auth/passkey/register` | (con sesión o clave) Registra el Face ID de un dispositivo (WebAuthn ES256). |
 | `POST /auth/passkey/login/options` · `POST /auth/passkey/login` | (público) Reto de un solo uso y verificación de la firma (presencia + verificación de usuario); devuelve token de sesión. |
 

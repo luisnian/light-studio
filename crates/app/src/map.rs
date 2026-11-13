@@ -85,6 +85,27 @@ pub(crate) fn view_at(wx: f64, wy: f64, zoom: f64) -> MapView {
     MapView { lat, lon, zoom }.sane()
 }
 
+/// A pin's picture.
+const PIN: f32 = 44.0;
+/// The tail under a pin's picture, down to the spot.
+const TAIL: f32 = 7.0;
+
+/// The view that shows every `(wx, wy)` inside `rect` (with a margin), no closer than street level.
+pub(crate) fn fit(points: &[(f64, f64)], rect: Rect) -> Option<MapView> {
+    let (first, rest) = points.split_first()?;
+    let (mut x0, mut y0, mut x1, mut y1) = (first.0, first.1, first.0, first.1);
+    for &(x, y) in rest {
+        (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+    }
+    // a pin stands above its spot: the room above the topmost one is kept free for it
+    let head = PIN + TAIL;
+    let (w, h) = (f64::from(rect.width().max(64.0)) * 0.72, f64::from((rect.height() - head).max(64.0)) * 0.72);
+    let span = |d: f64, room: f64| if d > 1e-9 { (room / (d * TILE)).log2() } else { 15.0 };
+    let zoom = span(x1 - x0, w).min(span(y1 - y0, h)).min(15.0);
+    let s = TILE * 2f64.powf(zoom);
+    Some(view_at((x0 + x1) / 2.0, (y0 + y1) / 2.0 - f64::from(head) / 2.0 / s, zoom))
+}
+
 /// `v` with its centre kept where the world fills the height of `rect` (no empty band past the poles).
 pub(crate) fn clamp_view(v: MapView, rect: Rect) -> MapView {
     let v = v.sane();

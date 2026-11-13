@@ -165,7 +165,7 @@ impl Page<'_> {
             let was = ctx.animate_bool_with_time(egui::Id::new(("planner-island", i)), rt.island_open[i], 0.0);
             let busy = match i {
                 0 => crate::text_field::was_editing(&ctx, "planner:search") || !self.search_is_empty(rt),
-                1 => crate::text_field::was_editing(&ctx, "planner:date") || popup,
+                1 => crate::text_field::was_editing(&ctx, "planner:date") || (popup && was > 0.02),
                 _ => crate::text_field::was_editing(&ctx, "planner:time"),
             };
             // the pointer may cross from the icon to its card without closing it
@@ -401,7 +401,10 @@ impl Page<'_> {
             st.time_wide = !st.time_wide;
         }
         let pad = vec2(2.0 + 12.0 * open, 2.0 + 6.0 * open);
-        let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(r.shrink2(pad)).layout(egui::Layout::top_down(Align::Min)));
+        // (the children have ids of their own: the auto ones shift with whatever was drawn before, and a popup opened from
+        // the bar would lose its id)
+        let mut ui =
+            ui.new_child(egui::UiBuilder::new().id_salt("planner-timebar-ui").max_rect(r.shrink2(pad)).layout(egui::Layout::top_down(Align::Min)));
         ui.set_clip_rect(r.shrink(1.0));
         // the controls float over the map (see `island`): the bar is the chart, as tall as it can be
         let bare = open < 0.45;
@@ -410,7 +413,7 @@ impl Page<'_> {
         // widen / narrow the bar (once it has grown)
         if open > 0.9 {
             let b = Rect::from_min_size(pos2(r.right() - 30.0, r.top() + 4.0), vec2(24.0, 24.0));
-            let mut btn = ui.new_child(egui::UiBuilder::new().max_rect(b).layout(egui::Layout::top_down(Align::Min)));
+            let mut btn = ui.new_child(egui::UiBuilder::new().id_salt("planner-timebar-wide").max_rect(b).layout(egui::Layout::top_down(Align::Min)));
             let tip = if st.time_wide { "Narrow the time bar" } else { "Widen the time bar (or double-click it)" };
             if icon_button(&mut btn, "plannerTimeWide", Icon::Fit, vec2(24.0, 24.0), st.time_wide, true, tip).clicked() {
                 st.time_wide = !st.time_wide;

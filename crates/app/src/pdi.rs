@@ -35,6 +35,14 @@ struct Shared {
     done: Option<Result<Done, String>>,
 }
 
+/// A route being sent to (or taken off) the phone, apart from the synchronisation of points.
+#[derive(Default)]
+struct RouteJob {
+    running: bool,
+    /// The route's id here, whether it was taking it off, and the id the phone knows it by — or why it failed.
+    done: Option<Result<(u64, bool, String), String>>,
+}
+
 /// Where a synchronisation is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Stage {
@@ -81,6 +89,7 @@ pub struct Pdi {
     pub last: Option<String>,
     /// Whether the last synchronisation ended without an error (`None`: none has ended yet).
     pub last_ok: Option<bool>,
+    route_job: Arc<Mutex<RouteJob>>,
 }
 
 impl Pdi {
@@ -114,6 +123,51 @@ fn start_with(app: &mut App, announce: bool, keys: Arc<dyn Keys + Send + Sync>, 
     app.pdi.run = Some(Run { keys, base, photos, sent: Vec::new(), reload: false, totals: Totals::default() });
     pull(app, false)?;
     Ok(json!({"started": true}))
+}
+
+/// Sends a route to the phone (`remove`: takes it off). It runs on a worker thread; `logic` applies the result.
+pub fn send_route(app: &mut App, id: u64, remove: bool) -> Result<Value, String> {
+    send_route_with(app, id, remove, Arc::new(pdi_sync::Keychain))
+}
+
+fn send_route_with(app: &mut App, id: u64, remove: bool, keys: Arc<dyn Keys + Send + Sync>) -> Result<Value, String> {
+    let tr = |s: &str| crate::i18n::tr(s).to_string();
+    let jobs = app.pdi.route_job.clone();
+    if jobs.lock().unwrap_or_else(PoisonError::into_inner).running {
+        return Err(tr("Already sending a route"));
+    }
+    let base = pdi_sync::valid_url(&app.ui.settings.pdi.url).map_err(|e| tr(&e))?;
+    let route = app.ui.planner.routes.iter().find(|r| r.id == id).ok_or_else(|| tr("That route does not exist"))?;
+    if remove && route.phone_id.is_empty() {
+        return Err(tr("That route is not on the phone"));
+    }
+    // the phone knows a route by an id of its own, kept from the first time so sending again replaces it
+    let phone_id = if route.phone_id.is_empty() { crate::planner::new_phone_id() } else { route.phone_id.clone() };
+    let body = crate::planner::phone_json(route, &phone_id);
+    jobs.lock().unwrap_or_else(PoisonError::into_inner).running = true;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let shared = jobs.clone();
+    let spawned = std::thread::Builder::new().name("pdi-route".into()).spawn(move || {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let key = keys.get()?.ok_or_else(|| "No key for the points-of-interest Worker yet: save it in Settings.".to_string())?;
+            let remote = pdi_sync::Worker { base, key, cancel: &cancel };
+            let prefix = pdi_sync::find_prefix(&remote)?;
+            if remove {
+                pdi_sync::remove_route(&remote, prefix, &phone_id)?;
+            } else {
+                pdi_sync::send_route(&remote, prefix, &body)?;
+            }
+            Ok((id, remove, phone_id))
+        }))
+        .unwrap_or_else(|_| Err("Sending the route stopped unexpectedly".to_string()));
+        let mut sh = shared.lock().unwrap_or_else(PoisonError::into_inner);
+        sh.running = false;
+        sh.done = Some(outcome);
+    });
+    spawned.map(|_| json!({"started": true, "route": id, "remove": remove})).map_err(|e| {
+        jobs.lock().unwrap_or_else(PoisonError::into_inner).running = false;
+        format!("could not start: {e}")
+    })
 }
 
 /// Saves the Worker's key in the keychain.
@@ -265,6 +319,24 @@ pub fn logic(app: &mut App, ctx: &egui::Context) {
     }
     if app.pdi.running() {
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
+    }
+    if app.pdi.route_job.lock().unwrap_or_else(PoisonError::into_inner).running {
+        ctx.request_repaint_after(std::time::Duration::from_millis(250));
+    }
+    let route_done = app.pdi.route_job.lock().unwrap_or_else(PoisonError::into_inner).done.take();
+    if let Some(outcome) = route_done {
+        let tr = |s: &str| crate::i18n::tr(s).to_string();
+        match outcome {
+            Ok((id, remove, phone_id)) => {
+                if let Some(r) = app.ui.planner.routes.iter_mut().find(|r| r.id == id) {
+                    r.phone_id = if remove { String::new() } else { phone_id };
+                    let name = r.name.clone();
+                    let line = if remove { tr("Route taken off the phone") } else { tr("Route sent to the phone") };
+                    app.toast(ctx, format!("{line}: {name}"));
+                }
+            }
+            Err(e) => app.toast_error(ctx, tr(&e)),
+        }
     }
     let done = app.pdi.lock().done.take();
     let Some(outcome) = done else { return };

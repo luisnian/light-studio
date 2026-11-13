@@ -28,6 +28,7 @@ pub struct FieldResponse {
     pub response: Response,
     committed: bool,
     cancelled: bool,
+    returned: bool,
 }
 
 impl FieldResponse {
@@ -39,6 +40,11 @@ impl FieldResponse {
     /// The edit ended with Escape.
     pub fn cancelled(&self) -> bool {
         self.cancelled
+    }
+
+    /// The edit ended with the Return key (not by leaving the field).
+    pub fn returned(&self) -> bool {
+        self.returned
     }
 
     pub fn changed(&self) -> bool {
@@ -100,6 +106,7 @@ impl<'a> TextField<'a> {
         let left = response.lost_focus() && !escape;
         // (a multiline field takes Enter as a new line: it commits only by leaving)
         let committed = left && (self.multiline || had_focus);
-        FieldResponse { response, committed, cancelled: escape }
+        let returned = left && !self.multiline && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        FieldResponse { response, committed, cancelled: escape, returned }
     }
 }

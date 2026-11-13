@@ -17,9 +17,10 @@
 //! Sources: Web Mercator tile scheme (OpenStreetMap wiki, "Slippy map tilenames"); own design.
 
 use std::collections::{HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::services::pmtiles::Archive;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 
 /// Where the tiles come from.
@@ -55,6 +56,11 @@ const MAX_TILE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TILE_EDGE: u32 = 1024;
 /// A cached tile older than this is fetched again (when the network allows; else it's kept).
 const CACHE_DAYS: u64 = 45;
+/// The disk cache of one tile source is cut to this many bytes (oldest tiles first). Satellite
+/// tiles at double resolution are ~100 KB each, so this holds thousands of them.
+const MAX_CACHE_BYTES: u64 = 512 << 20;
+/// The cache is measured once in this many tile writes (and at the first write of a run).
+const PRUNE_EVERY: usize = 200;
 
 /// Light or dark map, to match the app; or the satellite view and the place names over it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -409,6 +415,42 @@ pub fn tone(t: &mut Tile, style: MapStyle) {
     }
 }
 
+static WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Cut the tile folder `root` to `max` bytes, deleting the oldest tiles first (and leftovers of
+/// interrupted downloads). Best effort: a file that can't be read or removed is skipped.
+fn prune(root: &Path, max: u64) {
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    let mut total = 0u64;
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            let Ok(m) = e.metadata() else { continue };
+            if m.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "part") {
+                let _ = std::fs::remove_file(&p);
+            } else {
+                total = total.saturating_add(m.len());
+                files.push((m.modified().unwrap_or(std::time::UNIX_EPOCH), m.len(), p));
+            }
+        }
+    }
+    if total <= max {
+        return;
+    }
+    files.sort();
+    for (_, len, p) in files {
+        if total <= max {
+            break;
+        }
+        if std::fs::remove_file(&p).is_ok() {
+            total = total.saturating_sub(len);
+        }
+    }
+}
+
 /// The tile from the cache, else the network (then cached). `Err(true)`: a network failure (may
 /// work later); `Err(false)`: the tile itself is bad.
 fn load(shared: &Shared, k: TileKey, offline: bool) -> Result<Tile, bool> {
@@ -457,6 +499,11 @@ fn load(shared: &Shared, k: TileKey, offline: bool) -> Result<Tile, bool> {
                 let part = p.with_extension("part");
                 if std::fs::write(&part, &bytes).is_ok() {
                     let _ = std::fs::rename(&part, p);
+                }
+                if WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed).is_multiple_of(PRUNE_EVERY)
+                    && let Some(root) = &shared.cache
+                {
+                    prune(root, MAX_CACHE_BYTES);
                 }
             }
             Ok(tile)
@@ -524,9 +571,228 @@ pub fn unproject(x: f64, y: f64) -> (f64, f64) {
     (lat, lon)
 }
 
+/// An area of the map to keep for use with no network, at the zoom levels given.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Region {
+    pub south: f64,
+    pub west: f64,
+    pub north: f64,
+    pub east: f64,
+    pub z_min: u8,
+    pub z_max: u8,
+}
+
+/// The most tiles one download may ask for. OpenStreetMap's usage policy discourages bulk downloading, so its own
+/// servers get a small allowance (a town and its surroundings); a CARTO key or a server of one's own, more.
+pub fn region_limit(source: Source) -> usize {
+    match source {
+        Source::Osm => 1_500,
+        Source::Carto | Source::Custom => 12_000,
+        Source::Offline => 0,
+    }
+}
+
+impl Region {
+    /// Columns and rows `(x0, x1, y0, y1)`, inclusive, the area covers at zoom `z`; `None` for an empty or unusable area.
+    fn span(&self, z: u8) -> Option<(i64, i64, i64, i64)> {
+        let all = [self.south, self.west, self.north, self.east];
+        if all.iter().any(|v| !v.is_finite()) || self.south >= self.north || self.west >= self.east {
+            return None;
+        }
+        let n = (1u64 << z.min(MAX_ZOOM)) as f64;
+        let (x0, y1) = project(self.south, self.west);
+        let (x1, y0) = project(self.north, self.east);
+        let cell = |v: f64| (v * n).floor().clamp(0.0, n - 1.0) as i64;
+        Some((cell(x0), cell(x1), cell(y0), cell(y1)))
+    }
+
+    /// How many tiles the area holds over its zoom levels.
+    pub fn count(&self) -> u64 {
+        (self.z_min..=self.z_max.min(MAX_ZOOM))
+            .filter_map(|z| self.span(z))
+            .map(|(x0, x1, y0, y1)| ((x1 - x0 + 1) * (y1 - y0 + 1)).max(0) as u64)
+            .fold(0u64, u64::saturating_add)
+    }
+
+    /// The tiles of the area in one style, the coarse levels first (so a download stopped half way still shows the area).
+    pub fn keys(&self, style: MapStyle) -> Vec<TileKey> {
+        let mut out = Vec::new();
+        for z in self.z_min..=self.z_max.min(MAX_ZOOM) {
+            let Some((x0, x1, y0, y1)) = self.span(z) else { continue };
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    out.extend(TileKey::new(style, z, x, y));
+                }
+            }
+        }
+        out
+    }
+}
+
+/// What a download of tiles came to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Prefetched {
+    /// Tiles now on disk (fetched, or already there and fresh).
+    pub stored: usize,
+    pub failed: usize,
+    /// It ended before the end: cancelled, or the network was gone.
+    pub stopped: bool,
+}
+
+impl MapTiles {
+    /// Whether tiles can be kept on this computer for later (a cache folder and a network source).
+    pub fn can_keep(&self) -> bool {
+        self.shared.archive.is_none() && self.shared.source != Source::Offline && self.shared.cache.is_some()
+    }
+
+    /// Fetches `keys` into the disk cache, two at a time and not faster than a person browsing would, so the map works
+    /// with no network where it was kept. `progress(done, total)` is called as tiles arrive. It stops when `cancel` is
+    /// set or after a run of network failures.
+    pub fn prefetch(&self, keys: &[TileKey], cancel: &AtomicBool, progress: &(dyn Fn(usize, usize) + Sync)) -> Result<Prefetched, String> {
+        use std::sync::atomic::Ordering::Relaxed;
+        if !self.can_keep() {
+            return Err("this map source cannot be kept for use with no network".to_string());
+        }
+        let total = keys.len();
+        let (next, done, stored, failed, streak) =
+            (AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0));
+        let shared = &*self.shared;
+        let work = || {
+            loop {
+                if cancel.load(Relaxed) || streak.load(Relaxed) >= 12 {
+                    return;
+                }
+                let Some(&key) = keys.get(next.fetch_add(1, Relaxed)) else { return };
+                let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| load(shared, key, false))).unwrap_or(Err(false));
+                match got {
+                    Ok(_) => {
+                        stored.fetch_add(1, Relaxed);
+                        streak.store(0, Relaxed);
+                    }
+                    Err(network) => {
+                        failed.fetch_add(1, Relaxed);
+                        if network {
+                            streak.fetch_add(1, Relaxed);
+                        }
+                    }
+                }
+                progress(done.fetch_add(1, Relaxed) + 1, total);
+                std::thread::sleep(std::time::Duration::from_millis(40));
+            }
+        };
+        std::thread::scope(|s| {
+            let a = s.spawn(work);
+            let b = s.spawn(work);
+            // a worker that panicked outside `load` ends its half only; the other finishes the list
+            let _ = (a.join(), b.join());
+        });
+        let finished = done.load(Relaxed) >= total;
+        Ok(Prefetched { stored: stored.load(Relaxed), failed: failed.load(Relaxed), stopped: !finished })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tiny_png() -> Vec<u8> {
+        let mut png = Vec::new();
+        let mut e = png::Encoder::new(&mut png, 2, 2);
+        e.set_color(png::ColorType::Rgb);
+        e.set_depth(png::BitDepth::Eight);
+        let mut w = e.write_header().unwrap();
+        w.write_image_data(&[10, 20, 30, 10, 20, 30, 10, 20, 30, 10, 20, 30]).unwrap();
+        drop(w);
+        png
+    }
+
+    #[test]
+    fn a_region_counts_and_lists_its_tiles_coarse_levels_first() {
+        // Donostia and its surroundings
+        let r = Region { south: 43.2, west: -2.1, north: 43.4, east: -1.8, z_min: 8, z_max: 12 };
+        let keys = r.keys(MapStyle::Light);
+        assert_eq!(keys.len() as u64, r.count());
+        assert!(keys.windows(2).all(|w| w[0].z <= w[1].z));
+        assert_eq!(keys.first().map(|k| k.z), Some(8));
+        // deeper levels hold about four times the tiles per level, and every tile is inside the area
+        let at = |z: u8| keys.iter().filter(|k| k.z == z).count();
+        assert!(at(12) > at(11) && at(11) > at(10) && at(12) >= 8 * at(10), "{} {} {}", at(10), at(11), at(12));
+        let (x, y) = project(43.3, -1.95);
+        let k = keys.iter().find(|k| k.z == 10).unwrap();
+        assert!(((x * 1024.0).floor() - f64::from(k.x)).abs() <= 2.0 && ((y * 1024.0).floor() - f64::from(k.y)).abs() <= 2.0);
+        // empty, reversed or hostile areas hold nothing and cannot panic
+        for bad in [
+            Region { south: 44.0, west: -2.0, north: 43.0, east: -1.0, z_min: 5, z_max: 9 },
+            Region { south: f64::NAN, west: 0.0, north: 1.0, east: 1.0, z_min: 0, z_max: 3 },
+            Region { south: -90.0, west: -180.0, north: 90.0, east: 180.0, z_min: 9, z_max: 3 },
+        ] {
+            assert_eq!(bad.count(), 0);
+            assert!(bad.keys(MapStyle::Light).is_empty());
+        }
+        // the whole world at a high level is counted without being listed
+        let world = Region { south: -90.0, west: -180.0, north: 90.0, east: 180.0, z_min: 0, z_max: 19 };
+        assert!(world.count() > 1_000_000_000);
+        assert!(region_limit(Source::Osm) < region_limit(Source::Carto) && region_limit(Source::Offline) == 0);
+    }
+
+    #[test]
+    fn a_download_keeps_the_tiles_on_disk_and_stops_when_cancelled_or_with_no_network() {
+        use std::io::{Read, Write};
+        let dir = std::env::temp_dir().join(format!("ls-map-prefetch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let png = tiny_png();
+        // a server on this machine that answers every request with the tile
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = png.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let body = body.clone();
+                std::thread::spawn(move || {
+                    let mut s = stream;
+                    let mut buf = [0u8; 2048];
+                    let _ = s.read(&mut buf);
+                    let head = format!("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                    let _ = s.write_all(head.as_bytes());
+                    let _ = s.write_all(&body);
+                });
+            }
+        });
+        let tiles = MapTiles::with(format!("http://127.0.0.1:{port}/{{style}}/{{z}}/{{x}}/{{y}}.png"), Source::Custom, Some(dir.clone()));
+        let region = Region { south: 43.1, west: -2.3, north: 43.5, east: -1.6, z_min: 9, z_max: 12 };
+        let keys = region.keys(MapStyle::Light);
+        assert!(!keys.is_empty());
+        let seen = AtomicUsize::new(0);
+        let cancel = AtomicBool::new(false);
+        let report = tiles.prefetch(&keys, &cancel, &|done, total| {
+            assert!(done <= total);
+            seen.store(done, std::sync::atomic::Ordering::Relaxed);
+        });
+        assert_eq!(report, Ok(Prefetched { stored: keys.len(), failed: 0, stopped: false }));
+        assert_eq!(seen.load(std::sync::atomic::Ordering::Relaxed), keys.len());
+        // they are on disk, so a service with no network at all (nothing listens at that port) still has them
+        let k = keys[0];
+        assert!(dir.join(format!("light_all/{}/{}/{}.png", k.z, k.x, k.y)).exists());
+        let cached = MapTiles::with("http://127.0.0.1:9/{style}/{z}/{x}/{y}.png".into(), Source::Custom, Some(dir.clone()));
+        // (that is another template, so another cache: the same folder is given on purpose)
+        assert_eq!(cached.prefetch(&keys, &cancel, &|_, _| {}).map(|r| r.stored), Ok(keys.len()));
+        // cancelled before it starts: nothing is done and it says it stopped
+        let stop = AtomicBool::new(true);
+        let none = tiles.prefetch(&keys, &stop, &|_, _| {}).unwrap();
+        assert!(none.stopped && none.stored == 0);
+        // no network and nothing kept: a run of failures ends it early
+        let empty = std::env::temp_dir().join(format!("ls-map-prefetch-none-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&empty);
+        let lost = MapTiles::with("http://127.0.0.1:9/{style}/{z}/{x}/{y}.png".into(), Source::Custom, Some(empty.clone()));
+        let r = lost.prefetch(&keys, &AtomicBool::new(false), &|_, _| {}).unwrap();
+        assert!(keys.len() > 20, "{}", keys.len());
+        assert!(r.stopped && r.stored == 0 && r.failed < keys.len(), "{r:?} of {}", keys.len());
+        // a service that cannot keep tiles says so
+        let nowhere = MapTiles::with(String::new(), Source::Custom, None);
+        assert!(nowhere.prefetch(&keys, &cancel, &|_, _| {}).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&empty);
+    }
 
     #[test]
     fn the_light_pollution_atlas_is_asked_for_by_its_own_tile_numbers() {
@@ -564,6 +830,29 @@ mod tests {
         assert!(!allowed("http://example.org/{z}.png"));
         let k = TileKey::new(MapStyle::Dark, 3, 4, 2).unwrap();
         assert_eq!(url("https://h/{style}/{z}/{x}/{y}.png", k), "https://h/dark_all/3/4/2.png");
+    }
+
+    #[test]
+    fn the_tile_cache_is_cut_to_its_size_oldest_first() {
+        let dir = std::env::temp_dir().join(format!("ls-map-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let sub = dir.join("sat/5/1");
+        std::fs::create_dir_all(&sub).unwrap();
+        let now = std::time::SystemTime::now();
+        for i in 0..5u64 {
+            let f = sub.join(format!("{i}.png"));
+            std::fs::write(&f, vec![0u8; 1000]).unwrap();
+            let t = now - std::time::Duration::from_secs(1000 - i * 100); // 0 is the oldest
+            std::fs::File::options().write(true).open(&f).unwrap().set_modified(t).unwrap();
+        }
+        std::fs::write(sub.join("9.part"), b"half").unwrap();
+        prune(&dir, 2500);
+        let mut left: Vec<String> = std::fs::read_dir(&sub).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, ["3.png", "4.png"], "the newest two stay (2000 B <= 2500 B); the leftover part file goes");
+        prune(&dir, 1 << 30); // under the limit: nothing more is removed
+        assert_eq!(std::fs::read_dir(&sub).unwrap().count(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

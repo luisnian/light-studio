@@ -99,6 +99,14 @@ pub fn shadow(height: f64, sun: Horizontal) -> Option<(f64, f64)> {
     Some((height / sun.alt.to_radians().tan(), (sun.az + 180.0).rem_euclid(360.0)))
 }
 
+/// The distance (metres) at which an object `height` metres tall looks as big as a disc `diameter` degrees across (the Moon
+/// or the Sun), `None` for a height or size that is not a positive number. The 0.5° of the full Moon puts a 30 m tower at
+/// about 3.4 km.
+pub fn distance_to_match(height: f64, diameter: f64) -> Option<f64> {
+    (height.is_finite() && diameter.is_finite() && height > 0.0 && diameter > 0.0 && diameter < 90.0)
+        .then(|| height / (2.0 * (diameter.to_radians() / 2.0).tan()))
+}
+
 /// The point `distance` metres from `(lat, lon)` along `azimuth` (degrees), on a sphere.
 pub fn destination(lat: f64, lon: f64, azimuth: f64, distance: f64) -> (f64, f64) {
     let (p1, l1, b) = (lat.to_radians(), lon.to_radians(), azimuth.to_radians());
@@ -276,5 +284,12 @@ mod tests {
         assert!(alignments(obs, s, 0.0, 10).is_empty());
         assert!(alignments(obs, sight(0.0, 0.0, 0.0, 1.0, 0.0), f64::INFINITY, 10).is_empty());
         assert!(refraction(-10.0) == 0.0 && refraction(0.0) > 0.4 && refraction(0.0) < 0.6);
+    }
+
+    #[test]
+    fn a_tower_as_big_as_the_moon() {
+        let d = distance_to_match(30.0, 0.52).unwrap();
+        assert!((d - 3306.0).abs() < 30.0, "{d}");
+        assert!(distance_to_match(0.0, 0.5).is_none() && distance_to_match(30.0, f64::NAN).is_none() && distance_to_match(30.0, 0.0).is_none());
     }
 }

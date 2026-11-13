@@ -74,3 +74,15 @@ impl Page<'_> {
 fn unix_year_start(year: i32) -> f64 {
     Date::new(year, 1, 1).unix_midnight_utc()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_year_starts_at_midnight_utc_on_the_first_of_january() {
+        assert_eq!(unix_year_start(1970), 0.0);
+        assert_eq!(unix_year_start(2000), 946_684_800.0);
+        assert_eq!(unix_year_start(2001) - unix_year_start(2000), 366.0 * 86_400.0);
+    }
+}

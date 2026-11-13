@@ -158,3 +158,33 @@ test('passkey: se rechazan reto repetido, sin Face ID, otro dominio, otra clave 
   assert.equal((await login(await assertion(k, { challenge: b64u(randomBytes(32)) }))).status, 401);
   assert.equal((await login(await assertion(authn()))).status, 401);               // dispositivo no registrado
 });
+
+const route = (o = {}) => ({
+  id: randomUUID(), name: 'Cresta', distance_m: 5400.4, ascent_m: 320.6, descent_m: 300,
+  points: [[43.1, -2.1, 100.4], [43.2, -2.2], [95, 0], [43.3, -2.3, 150]],
+  waypoints: [{ name: 'Fuente', lat: 43.15, lon: -2.15 }, { name: 'Mal', lat: 200, lon: 0 }],
+  ...o,
+});
+
+test('rutas: se suben, se leen, se sustituyen y se quitan', async () => {
+  const r = route();
+  assert.equal((await post('/routes', r)).status, 201);
+  const list = (await (await fetch(`${A}/routes`, { headers: H })).json()).routes;
+  assert.equal(list.find((x) => x.id === r.id).distance_m, 5400);
+  const one = await (await fetch(`${A}/routes/${r.id}`, { headers: H })).json();
+  assert.deepEqual(one.points, [[43.1, -2.1, 100], [43.2, -2.2], [43.3, -2.3, 150]], 'los puntos imposibles se descartan');
+  assert.deepEqual(one.waypoints, [{ name: 'Fuente', lat: 43.15, lon: -2.15 }]);
+  // enviarla otra vez la sustituye
+  assert.equal((await post('/routes', { ...r, name: 'Cresta 2' })).status, 201);
+  assert.equal((await (await fetch(`${A}/routes/${r.id}`, { headers: H })).json()).name, 'Cresta 2');
+  assert.equal((await post('/routes/delete', { id: r.id })).status, 200);
+  assert.equal((await fetch(`${A}/routes/${r.id}`, { headers: H })).status, 404);
+  assert.equal((await post('/routes/delete', { id: r.id })).status, 200, 'quitar una que no está no es un error');
+});
+
+test('rutas: piden auth y rechazan lo que no es una ruta', async () => {
+  assert.equal((await fetch(`${A}/routes`)).status, 401);
+  assert.equal((await post('/routes', { id: 'no-uuid', points: [] })).status, 400);
+  assert.equal((await post('/routes', route({ points: [[43.1, -2.1]] }))).status, 400);
+  assert.equal((await post('/routes/delete', { id: 'x' })).status, 400);
+});

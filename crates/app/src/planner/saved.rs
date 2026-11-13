@@ -1,10 +1,11 @@
-//! Saved searches: the conditions of the Find card (body, direction, light, Moon) kept with their place, and the next date
-//! each one is met, worked out in the background every day. A search over the skyline is not saved: it needs the terrain
-//! read for the place, which a background check does not have.
+//! Saved searches: the conditions of the Find card (body, direction, light, Moon, skyline) kept with their place, and the
+//! next date each one is met, worked out in the background every day. A search over the skyline keeps the skyline it was
+//! made with (one altitude per direction, to a tenth of a degree), as the background check cannot read the terrain.
 
 use std::hash::{Hash, Hasher};
 
 use light_studio_astro::Observer;
+use light_studio_astro::horizon::Skyline;
 use light_studio_astro::search::{Conditions, Hit, Target, find_with};
 use light_studio_astro::time::{DAY, Date};
 use serde::{Deserialize, Serialize};
@@ -31,18 +32,33 @@ pub struct Spec {
     pub light: u8,
     pub ill: Option<[f64; 2]>,
     pub no_moon: bool,
+    /// Over the skyline: the body must clear it by this many degrees (low, high), and the skyline it was made with.
+    pub margin: Option<[f64; 2]>,
+    pub skyline: Option<Vec<f32>>,
 }
 
 impl Default for Spec {
     fn default() -> Self {
-        Self { sun: true, core: false, az: 90.0, alt: None, tol: 2.0, days: 365.0, light: 0, ill: None, no_moon: false }
+        Self { sun: true, core: false, az: 90.0, alt: None, tol: 2.0, days: 365.0, light: 0, ill: None, no_moon: false, margin: None, skyline: None }
     }
 }
 
 impl Spec {
-    /// The card's current conditions; `None` when they use the skyline.
+    /// The card's current conditions; `None` when they use the skyline (see [`Spec::with_skyline`]).
     pub fn of(st: &PlannerState) -> Option<Self> {
-        (!st.find_skyline).then(|| Self {
+        Self::with_skyline(st, None)
+    }
+
+    /// The card's current conditions, with the skyline of the place when the search uses it (`None` if it does and the
+    /// terrain has not been read).
+    pub fn with_skyline(st: &PlannerState, skyline: Option<&Skyline>) -> Option<Self> {
+        let (margin, kept) = if st.find_skyline {
+            let sky = skyline?;
+            (Some(st.find_margin), Some(sky.alt.iter().map(|a| (a * 10.0).round() as f32 / 10.0).collect()))
+        } else {
+            (None, None)
+        };
+        Some(Self {
             sun: st.find_sun && !st.find_core,
             core: st.find_core,
             az: st.find_az,
@@ -52,7 +68,15 @@ impl Spec {
             light: st.find_light,
             ill: st.find_use_ill.then_some(st.find_ill),
             no_moon: st.find_no_moon,
+            margin,
+            skyline: kept,
         })
+    }
+
+    /// The skyline kept with the search, as far as a search needs it (the altitude in each direction).
+    fn kept_skyline(&self) -> Option<Skyline> {
+        let alt: Vec<f64> = self.skyline.as_ref()?.iter().map(|a| f64::from(*a)).collect();
+        Some(Skyline { near: 0.0, far: 0.0, ground: 0.0, dist: vec![0.0; alt.len()], height: vec![0.0; alt.len()], alt })
     }
 
     /// Puts these conditions on the card.
@@ -72,7 +96,10 @@ impl Spec {
             st.find_ill = i;
         }
         st.find_no_moon = self.no_moon;
-        st.find_skyline = false;
+        st.find_skyline = self.margin.is_some() && self.skyline.is_some();
+        if let Some(m) = self.margin {
+            st.find_margin = m;
+        }
     }
 
     pub fn target(&self) -> Target {
@@ -122,6 +149,9 @@ impl Spec {
         if self.no_moon {
             label.push_str(&format!(" · {}", tr("Moon down")));
         }
+        if let (Some(m), Some(_)) = (self.margin, &self.skyline) {
+            label.push_str(&format!(" · {} {:.1}° … {:.1}°", tr("over the skyline"), m[0], m[1]));
+        }
         label
     }
 
@@ -140,6 +170,20 @@ impl Spec {
         if self.core {
             self.sun = false;
         }
+        // a skyline needs a margin and a usable list of directions; otherwise the search is the plain one
+        let usable = self.skyline.as_ref().is_some_and(|k| (8..=720).contains(&k.len()) && k.iter().all(|a| a.is_finite()));
+        match (self.margin, usable) {
+            (Some(m), true) => self.margin = Some([fix(m[0], -90.0, 90.0, 0.0), fix(m[1], -90.0, 90.0, 1.0)]),
+            _ => {
+                self.margin = None;
+                self.skyline = None;
+            }
+        }
+        if let Some(k) = &mut self.skyline {
+            for a in k {
+                *a = a.clamp(-90.0, 90.0);
+            }
+        }
     }
 
     /// The hits from `now` on, over at most `days` days, at a place.
@@ -149,16 +193,11 @@ impl Spec {
         }
         let off = super::zone::offset_at(lat, lon, now).0;
         let start = Date::from_unix(now, off).unix_midnight_utc() - f64::from(off) * 60.0;
-        let mut hits = find_with(
-            self.target(),
-            Observer::new(lat, lon),
-            start,
-            days.min(self.days as u32).max(1),
-            self.az,
-            self.alt,
-            self.tol,
-            self.conditions(),
-        );
+        let kept = self.kept_skyline();
+        let mut conditions = self.conditions();
+        conditions.skyline = kept.as_ref().zip(self.margin).map(|(s, m)| (s, m[0], m[1]));
+        let mut hits =
+            find_with(self.target(), Observer::new(lat, lon), start, days.min(self.days as u32).max(1), self.az, self.alt, self.tol, conditions);
         hits.retain(|h| h.unix >= now);
         hits
     }
@@ -181,7 +220,7 @@ impl Default for SavedSearch {
 }
 
 impl PlannerState {
-    pub(super) fn sane_searches(&mut self) {
+    pub(crate) fn sane_searches(&mut self) {
         self.searches.retain(|s| s.lat.is_finite() && s.lon.is_finite() && s.lat.abs() <= 90.0 && s.lon.abs() <= 180.0);
         self.searches.truncate(MAX_SEARCHES);
         for s in &mut self.searches {
@@ -316,7 +355,37 @@ mod tests {
         spec.apply(&mut other);
         assert_eq!(Spec::of(&other).unwrap(), spec);
         st.find_skyline = true;
-        assert!(Spec::of(&st).is_none(), "a search over the skyline is not saved");
+        assert!(Spec::of(&st).is_none(), "a search over the skyline needs the terrain to be saved");
+    }
+
+    fn ridge(alt: f64) -> Skyline {
+        Skyline { near: 0.0, far: 0.0, ground: 0.0, alt: vec![alt; 120], dist: vec![0.0; 120], height: vec![0.0; 120] }
+    }
+
+    #[test]
+    fn a_search_over_the_skyline_keeps_it() {
+        let st = PlannerState { find_skyline: true, find_margin: [0.0, 1.0], find_az: 90.0, find_tol: 30.0, ..Default::default() };
+        let spec = Spec::with_skyline(&st, Some(&ridge(5.04))).unwrap();
+        assert_eq!(spec.margin, Some([0.0, 1.0]));
+        assert_eq!(spec.skyline.as_ref().map(Vec::len), Some(120));
+        let mut other = PlannerState::default();
+        spec.apply(&mut other);
+        assert!(other.find_skyline && other.find_margin == [0.0, 1.0]);
+        // the date it gives is the one the same search over that skyline gives, and differs from the flat one
+        let (lat, lon, now) = (40.4, -3.7, now());
+        let over = spec.upcoming(lat, lon, now, 60);
+        let flat = Spec { margin: None, skyline: None, ..spec.clone() }.upcoming(lat, lon, now, 60);
+        assert!(over.iter().all(|h| h.margin.is_some_and(|m| (0.0..=1.0).contains(&m))), "every hit clears the ridge by 0° to 1°");
+        assert!(!flat.is_empty());
+        // hostile saved numbers fall back to the plain search
+        let mut bad = spec.clone();
+        bad.skyline = Some(vec![f32::NAN; 120]);
+        bad.sane();
+        assert!(bad.margin.is_none() && bad.skyline.is_none());
+        let mut few = spec;
+        few.skyline = Some(vec![1.0; 3]);
+        few.sane();
+        assert!(few.skyline.is_none());
     }
 
     #[test]

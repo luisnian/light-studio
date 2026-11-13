@@ -27,6 +27,8 @@ impl Grid {
     pub const COARSE: Grid = Grid { azimuths: AZIMUTHS, rings: RANGES, near: NEAR, far: FAR };
     /// A quarter of a degree between directions (1 440), 120 rings from 150 m to 60 km (under 4 % apart).
     pub const FINE: Grid = Grid { azimuths: 1440, rings: 120, near: 150.0, far: FAR };
+    /// A first, rough look that needs few tiles: half a degree between directions, 60 rings from 150 m to 15 km.
+    pub const QUICK: Grid = Grid { azimuths: 720, rings: 60, near: 150.0, far: 15_000.0 };
 
     /// Heights to ask for: the place itself, then the rings of each direction in turn.
     pub fn points(self) -> usize {
@@ -300,6 +302,20 @@ mod tests {
         assert!(s.altitude_at(90.0) > s.altitude_at(90.125) && s.altitude_at(90.125) > s.altitude_at(90.25), "slopes down over one sample step");
         assert!(skyline_for(g, &h[..10]).is_none());
         assert!(skyline_for(Grid { azimuths: 0, ..g }, &[]).is_none());
+    }
+
+    #[test]
+    fn the_quick_grid_is_a_smaller_look_that_ends_at_15_km_and_still_finds_a_mountain() {
+        let g = Grid::QUICK;
+        assert_eq!(g.points(), 1 + 720 * 60);
+        assert!(g.points() * 3 < Grid::FINE.points());
+        let r = g.ranges();
+        assert!((r[0] - 150.0).abs() < 1e-9 && (r[59] - 15_000.0).abs() < 1e-3);
+        let mut h = vec![0.0; g.points()];
+        h[1 + 180 * g.rings + 40] = 900.0; // east, direction 180 of 720
+        let s = skyline_for(g, &h).unwrap();
+        assert_eq!(s.alt.len(), 720);
+        assert_eq!(s.peaks(1.0).first().map(|p| p.az), Some(90.0));
     }
 
     #[test]
