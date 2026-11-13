@@ -18,6 +18,15 @@ pub(super) struct Row {
     pub visible: bool,
     /// The phases with their times, in order.
     pub times: Vec<(&'static str, f64)>,
+    /// For a central eclipse (the shadow reaches the Earth), what it is like on its central line at the greatest
+    /// eclipse, wherever that is: the width of the path in km and the seconds the total (or annular) phase lasts there.
+    pub central: Option<Central>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Central {
+    pub width_km: f64,
+    pub duration_s: f64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -53,6 +62,7 @@ pub(super) fn compute(obs: Observer, from: f64) -> Eclipses {
                 magnitude: e.umbral_magnitude.max(e.penumbral_magnitude - 1.0).max(e.umbral_magnitude),
                 visible: alt > 0.0,
                 times,
+                central: None,
             });
         }
         for e in solar_eclipses(a, b, obs) {
@@ -71,7 +81,9 @@ pub(super) fn compute(obs: Observer, from: f64) -> Eclipses {
             for (name, t) in [("Totality ends", e.c3), ("Partial ends", e.c4)] {
                 times.extend(t.map(|t| (name, t)));
             }
-            rows.push(Row { unix: e.greatest, solar: true, kind, magnitude: e.magnitude, visible: e.sun_alt > 0.0, times });
+            let central = light_studio_astro::besselian::greatest_point(e.new_moon)
+                .map(|p| Central { width_km: p.half_width_km.abs() * 2.0, duration_s: p.duration_s });
+            rows.push(Row { unix: e.greatest, solar: true, kind, magnitude: e.magnitude, visible: e.sun_alt > 0.0, times, central });
         }
     }
     rows.sort_by(|a, b| a.unix.total_cmp(&b.unix));
@@ -155,6 +167,12 @@ impl Page<'_> {
                 for (n, (name, time)) in r.times.iter().enumerate() {
                     row(ui, &format!("eclipse:{i}:{n}"), name, &clock(*time, self.c.offset), None);
                 }
+                if let Some(c) = r.central {
+                    row(ui, &format!("eclipse:{i}:width"), "Width of the path", &format!("{:.0} km", c.width_km), None);
+                    let secs = c.duration_s.round().max(0.0) as u32;
+                    let long = format!("{} min {:02} s", secs / 60, secs % 60);
+                    row(ui, &format!("eclipse:{i}:long"), "Duration on the central line", &long, None);
+                }
                 ui.add_space(4.0);
             }
         }
@@ -180,6 +198,18 @@ mod tests {
         // in order, and none before the start
         assert!(list.rows.windows(2).all(|w| w[0].unix <= w[1].unix));
         assert!(list.rows.iter().all(|r| r.unix >= unix_from_civil(2026, 7, 1, 0, 0, 0)));
+    }
+
+    #[test]
+    fn a_central_eclipse_row_carries_the_width_and_duration_of_its_path() {
+        // Madrid sees the partial phase of the eclipse of 2 August 2027, and the row still tells what the path is like
+        let obs = Observer::new(40.4168, -3.7038);
+        let list = compute(obs, unix_from_civil(2027, 7, 1, 0, 0, 0));
+        let row = list.rows.iter().find(|r| r.solar && (r.unix - unix_from_civil(2027, 8, 2, 10, 0, 0)).abs() < 7200.0).expect("listed");
+        let c = row.central.expect("a central eclipse");
+        assert!((c.width_km - 257.7).abs() < 6.0 && (c.duration_s - 382.6).abs() < 8.0, "{c:?}");
+        // a lunar eclipse has none
+        assert!(list.rows.iter().filter(|r| !r.solar).all(|r| r.central.is_none()));
     }
 
     #[test]

@@ -102,6 +102,75 @@ pub fn shade_dem(heights: &[f32], width: usize, height: usize, m_per_px: f64, su
     Some(cast)
 }
 
+/// How high the person stands above the ground at the point (metres), so that the grid's roughness does not shade it.
+const EYE_M: f32 = 2.0;
+/// Past this much height above the point the Sun's ray clears any ground on Earth.
+const CLEAR_M: f32 = 9000.0;
+
+fn ground_at(heights: &[f32], width: usize, height: usize, x: f64, y: f64) -> Option<f32> {
+    let (x, y) = (x - 0.5, y - 0.5);
+    if !(x.is_finite() && y.is_finite()) || x < 0.0 || y < 0.0 || x > (width - 1) as f64 || y > (height - 1) as f64 {
+        return None;
+    }
+    let (i, j) = (x.floor() as usize, y.floor() as usize);
+    let (fx, fy) = ((x - i as f64) as f32, (y - j as f64) as f32);
+    let at = |i: usize, j: usize| heights.get(j.min(height - 1) * width + i.min(width - 1)).copied();
+    let (a, b, c, d) = (at(i, j)?, at(i + 1, j)?, at(i, j + 1)?, at(i + 1, j + 1)?);
+    Some(a * (1.0 - fx) * (1.0 - fy) + b * fx * (1.0 - fy) + c * (1.0 - fx) * fy + d * fx * fy)
+}
+
+/// Whether the Sun's direct light reaches the point (`x`, `y`, in pixels of the grid, `y` from the north) at this moment: the
+/// ray towards the Sun is followed over the ground, and a ridge above it throws the point into shadow. `None` if the grid is
+/// not a grid of numbers, the point is outside it or the Sun is not a direction. Beyond the grid's edge nothing is known to
+/// block the ray. Only cast shadows count (a slope turned from the Sun is not looked at).
+pub fn point_lit(heights: &[f32], width: usize, height: usize, m_per_px: f64, x: f64, y: f64, sun: Horizontal) -> Option<bool> {
+    let n = width.checked_mul(height)?;
+    if width < 3 || height < 3 || heights.len() != n || !(m_per_px.is_finite() && m_per_px > 0.0) || !(sun.alt.is_finite() && sun.az.is_finite()) {
+        return None;
+    }
+    let h0 = ground_at(heights, width, height, x, y)? + EYE_M;
+    if sun.alt <= 0.0 {
+        return Some(false);
+    }
+    let rise_per_px = (sun.alt.to_radians().tan() * m_per_px) as f32;
+    let (dx, dy) = (sun.az.to_radians().sin(), -sun.az.to_radians().cos());
+    let mut k = 1.0_f64;
+    loop {
+        let ray = h0 + rise_per_px * k as f32;
+        if ray > h0 + CLEAR_M {
+            return Some(true);
+        }
+        match ground_at(heights, width, height, x + dx * k, y + dy * k) {
+            None => return Some(true),
+            Some(g) if g > ray => return Some(false),
+            Some(_) => {}
+        }
+        k += 1.0;
+    }
+}
+
+/// The stretches of `t0..t1` in which the Sun's direct light reaches the point (see [`point_lit`]); `sun_at` gives the Sun's
+/// direction at a moment. `step` seconds apart are looked at, and each edge is found to the second.
+#[allow(clippy::too_many_arguments)]
+pub fn lit_spans(
+    heights: &[f32],
+    width: usize,
+    height: usize,
+    m_per_px: f64,
+    x: f64,
+    y: f64,
+    sun_at: &dyn Fn(f64) -> Horizontal,
+    t0: f64,
+    t1: f64,
+    step: f64,
+) -> Vec<crate::plan::Span> {
+    if point_lit(heights, width, height, m_per_px, x, y, Horizontal { az: 180.0, alt: 45.0 }).is_none() {
+        return Vec::new();
+    }
+    let lit = |t: f64| point_lit(heights, width, height, m_per_px, x, y, sun_at(t)).unwrap_or(false);
+    crate::plan::spans(&lit, t0, t1, step.max(1.0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,5 +261,54 @@ mod tests {
         let towards = shade_dem(&ramp, W, H, 50.0, sun(270.0, 35.0)).unwrap();
         assert!(at(&away, 60, 45) > 0.2, "{}", at(&away, 60, 45));
         assert!(at(&towards, 60, 45) < 0.01);
+    }
+
+    fn ridge_grid(ridge_m: f32) -> (Vec<f32>, usize, usize) {
+        // flat ground at 100 m, with a wall of `ridge_m` across columns 30..32 (to the west of the point)
+        let (w, h) = (80, 40);
+        let mut v = vec![100.0; w * h];
+        for j in 0..h {
+            for i in 30..32 {
+                v[j * w + i] = ridge_m;
+            }
+        }
+        (v, w, h)
+    }
+
+    #[test]
+    fn a_wall_to_the_west_shades_the_point_in_the_evening_only() {
+        let (v, w, h) = ridge_grid(400.0);
+        // the point is 20 px (1 km at 50 m a pixel) east of the wall: the wall is 300 m above it
+        let (x, y) = (52.0, 20.0);
+        // sun in the east, low: lit. In the west at 10°: the wall (300 m at 1 km, 17°) hides it. In the west at 40°: clears it.
+        assert_eq!(point_lit(&v, w, h, 50.0, x, y, Horizontal { az: 90.0, alt: 10.0 }), Some(true));
+        assert_eq!(point_lit(&v, w, h, 50.0, x, y, Horizontal { az: 270.0, alt: 10.0 }), Some(false));
+        assert_eq!(point_lit(&v, w, h, 50.0, x, y, Horizontal { az: 270.0, alt: 40.0 }), Some(true));
+        assert_eq!(point_lit(&v, w, h, 50.0, x, y, Horizontal { az: 270.0, alt: -3.0 }), Some(false));
+    }
+
+    #[test]
+    fn the_hours_of_sun_at_a_point_are_the_ones_the_ridge_leaves() {
+        let (v, w, h) = ridge_grid(400.0);
+        // a Sun that goes from east to west in 10 hours, 5° to 45° to 5°
+        let sun = |t: f64| {
+            let f = (t / 36000.0).clamp(0.0, 1.0);
+            Horizontal { az: 90.0 + 180.0 * f, alt: 45.0 * (std::f64::consts::PI * f).sin() }
+        };
+        let spans = lit_spans(&v, w, h, 50.0, 52.0, 20.0, &sun, 0.0, 36000.0, 300.0);
+        let lit: f64 = spans.iter().map(|s| s.end - s.start).sum();
+        assert!(spans.len() == 1 && lit > 3.0 * 3600.0 && lit < 9.5 * 3600.0, "{spans:?} {lit}");
+        assert!(spans[0].end < 36000.0 - 600.0, "the wall ends the day early");
+    }
+
+    #[test]
+    fn a_point_off_the_grid_or_a_broken_grid_is_not_lit_nor_shaded() {
+        let (v, w, h) = ridge_grid(400.0);
+        let sun = Horizontal { az: 90.0, alt: 30.0 };
+        assert_eq!(point_lit(&v, w, h, 50.0, -5.0, 20.0, sun), None);
+        assert_eq!(point_lit(&v, w, h, 50.0, f64::NAN, 20.0, sun), None);
+        assert_eq!(point_lit(&v[..10], w, h, 50.0, 52.0, 20.0, sun), None);
+        assert_eq!(point_lit(&v, w, h, 0.0, 52.0, 20.0, sun), None);
+        assert!(lit_spans(&v, w, h, 50.0, 500.0, 500.0, &|_| sun, 0.0, 1000.0, 60.0).is_empty());
     }
 }

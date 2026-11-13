@@ -76,6 +76,17 @@ fn spans_minutes(s: &[Span]) -> f64 {
 }
 
 /// The hours of a night: the astronomical dark (else the whole night) and how much of it has no Moon.
+/// A colour for an outing index: dim when low, the accent's warm tone when high.
+fn index_colour(score: f64, dim: Color32) -> Color32 {
+    if score >= 66.0 {
+        Color32::from_rgb(120, 200, 140)
+    } else if score >= 33.0 {
+        Color32::from_rgb(230, 190, 90)
+    } else {
+        dim
+    }
+}
+
 fn night_figures(n: &NightProfile) -> (f64, f64) {
     let dark = spans_minutes(&n.dark);
     if dark > 0.0 {
@@ -86,6 +97,11 @@ fn night_figures(n: &NightProfile) -> (f64, f64) {
 }
 
 impl Page<'_> {
+    /// The outing index (0..100) of a night of the year, without clouds, with the sky brightness given for the place.
+    fn night_index(&self, n: &NightProfile, moon_illumination: f64) -> f64 {
+        light_studio_astro::outing::outing_index(&n.score(), moon_illumination, None, self.sky_mag).score
+    }
+
     /// The year of the day shown: a header (year, paging, back to today) and the months in a scrolling window.
     pub(super) fn sky_calendar(&mut self, ui: &mut Ui, mode: SkyMode, rt: &mut Runtime) {
         let t = self.t;
@@ -216,6 +232,18 @@ impl Page<'_> {
                     moon_disc(&p, at, 7.5, phase.elongation, mirrored, lit, shade, t.divider);
                     let (total, moonless) = self.year.get(date.ordinal() as usize - 1).map_or((0.0, 0.0), night_figures);
                     ring(&p, at, 12.0, if total > 0.0 { moonless / total } else { 0.0 }, t.track, self.pal.sun);
+                    // the outing index of the night (no clouds: the forecast does not reach so far), when the core is up in the dark
+                    if let Some(score) =
+                        self.year.get(date.ordinal() as usize - 1).map(|n| self.night_index(n, phase.illumination)).filter(|s| *s >= 1.0)
+                    {
+                        p.text(
+                            pos2(cell.center().x, cell.bottom() - 4.0),
+                            Align2::CENTER_CENTER,
+                            format!("{score:.0}"),
+                            t.font(9.0),
+                            index_colour(score, t.text_dim),
+                        );
+                    }
                 }
             }
             if resp.clicked() {
@@ -291,6 +319,10 @@ impl Page<'_> {
                                     format!("{} {}", hm(moonless), crate::i18n::tr("without Moon"))
                                 };
                                 fact(ui, "Night hours without Moon", v);
+                                if let Some(n) = night.as_ref() {
+                                    let score = self.night_index(n, phase.illumination);
+                                    fact(ui, "Outing index", if score >= 1.0 { format!("{score:.0} / 100") } else { "—".to_string() });
+                                }
                             }
                         });
                     });
@@ -368,6 +400,7 @@ mod tests {
             dark: vec![span(22.0, 28.0)],
             moon_up: vec![span(20.0, 25.0)],
             core: vec![],
+            best_core_alt: -90.0,
         };
         let (total, moonless) = night_figures(&n);
         assert!((total - 360.0).abs() < 1e-6 && (moonless - 180.0).abs() < 1e-6, "{total} {moonless}");

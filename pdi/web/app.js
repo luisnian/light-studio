@@ -6,12 +6,13 @@ const nowIso = () => new Date().toISOString();
 
 // ---------- IndexedDB ----------
 const idb = new Promise((res, rej) => {
-  const r = indexedDB.open('rawstudiopdi', 1);
+  const r = indexedDB.open('rawstudiopdi', 2);
   r.onupgradeneeded = () => {
     const d = r.result;
-    d.createObjectStore('pois', { keyPath: 'id' });
-    d.createObjectStore('photos', { keyPath: 'att' }); // fotos propias pendientes o ya subidas
-    d.createObjectStore('meta', { keyPath: 'k' });
+    if (!d.objectStoreNames.contains('pois')) d.createObjectStore('pois', { keyPath: 'id' });
+    if (!d.objectStoreNames.contains('photos')) d.createObjectStore('photos', { keyPath: 'att' }); // fotos propias pendientes o ya subidas
+    if (!d.objectStoreNames.contains('meta')) d.createObjectStore('meta', { keyPath: 'k' });
+    if (!d.objectStoreNames.contains('routes')) d.createObjectStore('routes', { keyPath: 'id' }); // rutas enviadas desde el Mac
   };
   r.onsuccess = () => res(r.result);
   r.onerror = () => rej(r.error);
@@ -28,7 +29,9 @@ const metaSet = (k, v) => dbPut('meta', { k, v });
 // ---------- Estado ----------
 let pois = [];          // PDI locales (incluye los marcados para borrar; se filtran al pintar)
 let pos = null;         // última posición GPS {lat, lon, acc}
-let map, markers, meMarker;
+let map, markers, meMarker, routeLayer;
+let routes = [];        // rutas del Mac (solo lectura): se ven sin cobertura
+let routeHidden = new Set(); // rutas ocultas en el mapa (solo esta sesión)
 let editing = null;     // PDI abierto en la ficha
 let pendingPos = null;  // posición ajustada a mano en la ficha (se aplica al guardar)
 let photoPos = null;    // ubicación EXIF de una foto añadida en la ficha
@@ -36,7 +39,7 @@ let pendingPhotos = []; // fotos nuevas de la ficha abierta
 let syncing = false;
 
 const live = () => pois.filter((p) => !p._del && !p.deleted_at).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
-const reload = async () => { pois = await dbAll('pois'); render(); };
+const reload = async () => { pois = await dbAll('pois'); routes = (await dbAll('routes')).sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || '')); render(); };
 
 function toast(msg, ms = 2600) {
   const t = $('toast'); t.textContent = msg; t.hidden = false;
@@ -104,7 +107,7 @@ function setBase(kind) {
 function initMap() {
   try {
     map = L.map('map', { zoomControl: false, attributionControl: false }).setView([43.2, -2.0], 9);
-    markers = L.layerGroup().addTo(map); window.pdiMap = map;
+    routeLayer = L.layerGroup().addTo(map); markers = L.layerGroup().addTo(map); window.pdiMap = map;
     // Safari cambia el alto útil (barra del navegador) incluso con la vista oculta: reajustar siempre que cambie
     const fit = () => { const el = $('map'); if (map && el.clientWidth && el.clientHeight) map.invalidateSize({ pan: false }); };
     window.pdiFit = () => { fit(); requestAnimationFrame(fit); setTimeout(fit, 120); setTimeout(fit, 450); };
@@ -125,6 +128,45 @@ function drawMarkers() {
   }
 }
 
+function drawRoutes() {
+  if (!routeLayer) return;
+  routeLayer.clearLayers();
+  for (const r of routes) {
+    if (routeHidden.has(r.id) || !Array.isArray(r.points) || r.points.length < 2) continue;
+    const line = r.points.map((p) => [p[0], p[1]]);
+    L.polyline(line, { color: '#0a84ff', weight: 7, opacity: 0.35 }).addTo(routeLayer);
+    L.polyline(line, { color: '#0a84ff', weight: 3.5, opacity: 1 }).addTo(routeLayer);
+    const end = (at, fill) => L.circleMarker(at, { radius: 6, color: '#fff', weight: 2, fillColor: fill, fillOpacity: 1 }).addTo(routeLayer);
+    end(line[0], '#30d158'); end(line[line.length - 1], '#ff453a');
+    for (const w of r.waypoints || []) {
+      L.circleMarker([w.lat, w.lon], { radius: 5, color: '#0a84ff', weight: 2, fillColor: '#fff', fillOpacity: 1 }).bindTooltip(w.name || '', { direction: 'top' }).addTo(routeLayer);
+    }
+  }
+}
+function showRoute(r) {
+  routeHidden.delete(r.id); drawRoutes();
+  document.querySelector('nav.bar .tab[data-view="viewMap"]')?.click();
+  if (map && r.points?.length) map.fitBounds(L.latLngBounds(r.points.map((p) => [p[0], p[1]])), { padding: [30, 30] });
+}
+function renderRoutes() {
+  $('routesHead').hidden = !routes.length;
+  const ul = $('routeList'); ul.textContent = '';
+  for (const r of routes) {
+    const li = document.createElement('li');
+    const t = document.createElement('div'); t.className = 't';
+    const b = document.createElement('b'); b.textContent = r.name;
+    const s = document.createElement('small'); s.textContent = `${fmtM(r.distance_m || 0)} · +${Math.round(r.ascent_m || 0)} m · -${Math.round(r.descent_m || 0)} m`;
+    t.append(b, s); li.append(t);
+    const hide = document.createElement('button'); hide.type = 'button'; hide.className = 'mini';
+    hide.textContent = routeHidden.has(r.id) ? 'Mostrar' : 'Ocultar';
+    hide.onclick = (e) => { e.stopPropagation(); routeHidden.has(r.id) ? routeHidden.delete(r.id) : routeHidden.add(r.id); renderRoutes(); drawRoutes(); };
+    li.append(hide);
+    li.onclick = () => showRoute(r);
+    ul.append(li);
+  }
+  drawRoutes();
+}
+
 // ---------- Pintado ----------
 function render() {
   const items = live();
@@ -141,7 +183,7 @@ function render() {
     li.onclick = () => openSheet(p);
     ul.append(li);
   }
-  drawMarkers();
+  drawMarkers(); renderRoutes();
   const pend = pois.filter((p) => p._dirty).length;
   const st = syncing ? 'pend' : pend ? 'pend' : render.err ? 'err' : 'ok';
   const btn = $('syncBtn');
@@ -393,6 +435,20 @@ async function sync(quiet = false) {
       }
       cursor = d.cursor; more = d.has_more; await metaSet('cursor', cursor);
     }
+    // 4) Rutas del Mac: se bajan las nuevas o cambiadas y se quitan las que ya no están (un Worker antiguo no las conoce: se ignora)
+    try {
+      const rr = await api('/routes');
+      if (rr.ok) {
+        const remote = (await rr.json()).routes || [];
+        const have = new Map((await dbAll('routes')).map((x) => [x.id, x]));
+        for (const s of remote) {
+          if (have.get(s.id)?.updated_at === s.updated_at) continue;
+          const one = await api(`/routes/${s.id}`);
+          if (one.ok) await dbPut('routes', await one.json());
+        }
+        for (const id of have.keys()) if (!remote.some((s) => s.id === id)) await dbDel('routes', id);
+      }
+    } catch (e) { if (e.auth) throw e; }
     api('/sync/ack', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cursor, device: 'mobile' }) }).catch(() => {});
     await metaSet('last_sync', nowIso());
     if (!quiet) toast('Sincronizado');

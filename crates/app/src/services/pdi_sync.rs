@@ -214,6 +214,36 @@ pub fn push(remote: &dyn Remote, prefix: &str, ops: &[Value], cancel: &AtomicBoo
     (done, None)
 }
 
+/// Sends a route to the phone (the Worker replaces the one with the same `id`, so sending again is harmless).
+/// `route`: `{id, name, distance_m, ascent_m, descent_m, points: [[lat, lon, ele?]], waypoints: [{name, lat, lon}]}`.
+pub fn send_route(remote: &dyn Remote, prefix: &str, route: &Value) -> Result<(), String> {
+    let body = route.to_string();
+    if body.len() > MAX_REQUEST {
+        return Err("The route is too big for the phone".into());
+    }
+    let (status, text) = remote.post_json(&format!("{prefix}/routes"), &body)?;
+    route_status(status, &text)
+}
+
+/// Takes a route off the phone (it is not an error if it was not there).
+pub fn remove_route(remote: &dyn Remote, prefix: &str, id: &str) -> Result<(), String> {
+    let (status, text) = remote.post_json(&format!("{prefix}/routes/delete"), &serde_json::json!({ "id": id }).to_string())?;
+    route_status(status, &text)
+}
+
+/// What an answer about a route means: done, or why not (the Worker's own message when it gave one).
+fn route_status(status: u16, body: &str) -> Result<(), String> {
+    match status {
+        200 | 201 => Ok(()),
+        401 | 403 => Err("The Worker did not accept the key: check it in Settings.".into()),
+        404 => Err("The Worker is out of date: deploy the new version to send routes".into()),
+        s => Err(serde_json::from_str::<Value>(body)
+            .ok()
+            .and_then(|v| v["message"].as_str().map(|m| m.chars().take(200).collect::<String>()))
+            .unwrap_or_else(|| format!("The Worker answered {s} when sending the route"))),
+    }
+}
+
 /// Tells the Worker how far this computer has read (it is for tidying up later; a failure changes nothing).
 pub fn ack(remote: &dyn Remote, prefix: &str, cursor: &str) {
     let _ = remote
@@ -559,6 +589,23 @@ mod tests {
             let (_, s, b) = self.0.iter().find(|(p, _, _)| *p == path).ok_or("unexpected")?;
             Ok((*s, (*b).to_string()))
         }
+    }
+
+    #[test]
+    fn a_route_goes_up_and_comes_off_and_the_answers_are_understood() {
+        let w = Canned(vec![("/api/v1/routes", 201, "{}"), ("/api/v1/routes/delete", 200, "{}")], std::cell::RefCell::new(Vec::new()));
+        let route = serde_json::json!({"id": "x", "points": [[1.0, 2.0], [1.1, 2.1]]});
+        assert!(send_route(&w, "/api/v1", &route).is_ok());
+        assert!(remove_route(&w, "/api/v1", "x").is_ok());
+        assert_eq!(*w.1.borrow(), vec!["POST /api/v1/routes", "POST /api/v1/routes/delete"]);
+        assert!(route_status(401, "").unwrap_err().contains("key"));
+        assert!(route_status(404, "").unwrap_err().contains("out of date"));
+        assert_eq!(route_status(400, r#"{"message":"ruta vacía"}"#).unwrap_err(), "ruta vacía");
+        assert!(route_status(500, "").unwrap_err().contains("500"));
+        // too big: not even sent
+        let big = serde_json::json!({"x": "a".repeat(MAX_REQUEST + 1)});
+        let quiet = Canned(vec![], std::cell::RefCell::new(Vec::new()));
+        assert!(send_route(&quiet, "/api/v1", &big).is_err() && quiet.1.borrow().is_empty());
     }
 
     #[test]

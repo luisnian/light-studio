@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod date_picker;
+pub mod gpx;
 pub mod i18n;
 pub mod icons;
 pub mod links;

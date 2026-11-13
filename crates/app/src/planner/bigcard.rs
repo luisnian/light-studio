@@ -264,7 +264,7 @@ impl Page<'_> {
                 ui.add_space(4.0);
                 row(ui, "sun:shadow", "Shadows", &shadow, Some(Color32::from_gray(125)));
             }
-            Item::SunCard => self.sun_card(ui),
+            Item::SunCard => self.sun_card(ui, st, rt),
             Item::SunFacts => self.sun_facts(ui),
             Item::SunCal => {
                 subhead(ui, "Sun Calendar");
@@ -274,13 +274,13 @@ impl Page<'_> {
                 subhead(ui, "Sky");
                 self.dial_card(ui);
             }
-            Item::MoonCard => self.moon_card(ui, st),
+            Item::MoonCard => self.moon_card(ui, st, rt),
             Item::MoonFacts => self.moon_facts(ui, rt),
             Item::MoonCal => {
                 subhead(ui, "Moon Calendar");
                 self.sky_calendar(ui, SkyMode::Moon, rt);
             }
-            Item::Core => self.core_card(ui),
+            Item::Core => self.core_card(ui, st, rt),
             Item::Showers => {
                 subhead(ui, "Meteor Showers");
                 self.showers_card(ui);

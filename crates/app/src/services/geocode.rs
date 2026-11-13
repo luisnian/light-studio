@@ -118,20 +118,42 @@ pub fn parse_nominatim(json: &str) -> Result<Vec<Hit>, String> {
     Ok(out)
 }
 
-/// Looks `query` up (at most `limit` matches); `lang` is the app's language code, for the names Photon can give in it.
-/// `LIGHT_STUDIO_GEOCODE_URL` points the first service at another server answering like Photon, and
-/// `LIGHT_STUDIO_GEOCODE_FALLBACK_URL` the second at one answering like Nominatim (tests).
+/// Which services answer: Photon's address and, when allowed, Nominatim's. `first`/`fallback` are
+/// `LIGHT_STUDIO_GEOCODE_URL` / `LIGHT_STUDIO_GEOCODE_FALLBACK_URL`. While typing (`submitted == false`)
+/// only Photon is asked: Nominatim's public policy does not allow search-as-you-type, so it is
+/// reserved for a search the user sends with Return.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn search(query: &str, lang: &str, limit: usize) -> Result<Vec<Hit>, String> {
-    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
-    let first = env("LIGHT_STUDIO_GEOCODE_URL");
-    let second = match (env("LIGHT_STUDIO_GEOCODE_FALLBACK_URL"), &first) {
+fn services(submitted: bool, first: Option<String>, fallback: Option<String>) -> (String, Option<String>) {
+    let second = match (fallback, &first) {
+        _ if !submitted => None,
         (Some(url), _) => Some(url),
         // (with the first one pointed elsewhere, tests don't wander off to the real second one)
         (None, Some(_)) => None,
         (None, None) => Some(NOMINATIM.to_string()),
     };
-    search_with(first.as_deref().unwrap_or(PHOTON), second.as_deref(), query, lang, limit)
+    (first.unwrap_or_else(|| PHOTON.to_string()), second)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run(submitted: bool, query: &str, lang: &str, limit: usize) -> Result<Vec<Hit>, String> {
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    let (photon, nominatim) = services(submitted, env("LIGHT_STUDIO_GEOCODE_URL"), env("LIGHT_STUDIO_GEOCODE_FALLBACK_URL"));
+    search_with(&photon, nominatim.as_deref(), query, lang, limit)
+}
+
+/// Looks `query` up while it is being typed (at most `limit` matches; `lang` is the app's language
+/// code, for the names Photon can give in it). Photon only. `LIGHT_STUDIO_GEOCODE_URL` points it at
+/// another server answering like Photon (tests).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn search(query: &str, lang: &str, limit: usize) -> Result<Vec<Hit>, String> {
+    run(false, query, lang, limit)
+}
+
+/// The search the user sent (Return): Photon, and Nominatim if Photon found nothing or did not
+/// answer. `LIGHT_STUDIO_GEOCODE_FALLBACK_URL` points the second at one answering like Nominatim (tests).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn search_submitted(query: &str, lang: &str, limit: usize) -> Result<Vec<Hit>, String> {
+    run(true, query, lang, limit)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -160,6 +182,11 @@ pub fn search(_: &str, _: &str, _: usize) -> Result<Vec<Hit>, String> {
     Err("the place search needs the desktop app".into())
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn search_submitted(_: &str, _: &str, _: usize) -> Result<Vec<Hit>, String> {
+    Err("the place search needs the desktop app".into())
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn get(address: &str) -> Result<String, String> {
     use crate::net;
@@ -178,6 +205,18 @@ fn get(address: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nominatim_is_only_asked_for_a_search_the_user_sent() {
+        let (p, n) = services(false, None, None);
+        assert_eq!((p.as_str(), n), (PHOTON, None), "typing: Photon alone");
+        let (_, n) = services(false, None, Some("http://x/".into()));
+        assert_eq!(n, None, "typing: no second service even if one is configured");
+        let (_, n) = services(true, None, None);
+        assert_eq!(n.as_deref(), Some(NOMINATIM), "Return: Nominatim as the fallback");
+        let (p, n) = services(true, Some("http://p/".into()), None);
+        assert_eq!((p.as_str(), n), ("http://p/", None), "a custom first service keeps tests off the real second");
+    }
 
     #[test]
     fn escapes_the_query() {

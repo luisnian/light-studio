@@ -217,6 +217,37 @@ pub fn heights(points: &[(f64, f64)]) -> Result<Vec<f64>, String> {
     heights_with(dir.as_deref(), &base, points)
 }
 
+/// Like [`heights`], with the finer Mapterhorn terrain for the points near the first one (the place) when it can be had.
+/// The flag says whether it was used; when it cannot be reached the AWS tiles serve every point (and it is not tried
+/// again this session).
+pub fn heights_detailed(points: &[(f64, f64)]) -> Result<(Vec<f64>, bool), String> {
+    if !crate::services::terrain_fine::given_up() {
+        match detailed(&crate::services::terrain_fine::Fine::standard(), points, heights) {
+            Ok(h) => return Ok((h, true)),
+            Err(e) => {
+                log::warn!("mountains: finer terrain: {e}");
+                crate::services::terrain_fine::give_up();
+            }
+        }
+    }
+    heights(points).map(|h| (h, false))
+}
+
+/// The finer terrain near the place and the AWS tiles for the rest of `points`.
+fn detailed(
+    fine: &crate::services::terrain_fine::Fine,
+    points: &[(f64, f64)],
+    rest_from: impl Fn(&[(f64, f64)]) -> Result<Vec<f64>, String>,
+) -> Result<Vec<f64>, String> {
+    if points.is_empty() || points.len() > MAX_POINTS {
+        return Err(format!("ask for 1 to {MAX_POINTS} points"));
+    }
+    let near = fine.near_heights(points)?;
+    let rest: Vec<(f64, f64)> = points.iter().zip(&near).filter(|(_, n)| n.is_none()).map(|(p, _)| *p).collect();
+    let mut far = if rest.is_empty() { Vec::new() } else { rest_from(&rest)? }.into_iter();
+    near.into_iter().map(|n| n.or_else(|| far.next()).ok_or_else(|| "the ground heights did not add up".to_string())).collect()
+}
+
 fn heights_with(dir: Option<&Path>, base: &str, points: &[(f64, f64)]) -> Result<Vec<f64>, String> {
     if points.is_empty() || points.len() > MAX_POINTS {
         return Err(format!("ask for 1 to {MAX_POINTS} points"));
@@ -361,5 +392,30 @@ mod tests {
         assert!(heights_with(Some(&dir), &base, &[]).is_err());
         assert!(heights_with(Some(&dir), &base, &[(f64::NAN, 0.0)]).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_finer_terrain_serves_the_disc_round_the_place_and_the_other_tiles_the_rest() {
+        let (lat, lon) = (43.3, -1.98);
+        let (url, _) =
+            crate::services::terrain_fine::tests::serve(crate::services::terrain_fine::tests::archive_round(lat, lon, 3_500.0, 480.0), true);
+        let fine = crate::services::terrain_fine::Fine::new(url, None, 3_000.0);
+        let east = |m: f64| (lat, lon + m / (111_320.0 * lat.to_radians().cos()));
+        let points = [(lat, lon), east(1_000.0), east(20_000.0), east(40_000.0)];
+        let seen = std::cell::RefCell::new(Vec::new());
+        let h = detailed(&fine, &points, |rest| {
+            seen.borrow_mut().push(rest.len());
+            Ok(vec![900.0; rest.len()])
+        })
+        .unwrap();
+        assert!((h[0] - 480.0).abs() < 0.05 && (h[1] - 480.0).abs() < 0.05, "{h:?}");
+        assert_eq!((h[2], h[3]), (900.0, 900.0));
+        assert_eq!(*seen.borrow(), vec![2], "only the far points are asked of the other tiles");
+        // all near: the other tiles are not asked at all
+        let h = detailed(&fine, &points[..2], |_| Err("not wanted".into())).unwrap();
+        assert!((h[1] - 480.0).abs() < 0.05);
+        // the finer terrain failing is an error here (the caller falls back)
+        let gone = crate::services::terrain_fine::Fine::new("http://127.0.0.1:1/planet.pmtiles".into(), None, 3_000.0);
+        assert!(detailed(&gone, &points, |r| Ok(vec![0.0; r.len()])).is_err());
     }
 }

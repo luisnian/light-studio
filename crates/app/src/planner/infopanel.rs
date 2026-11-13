@@ -165,7 +165,12 @@ impl Page<'_> {
         let t = self.t;
         for (i, (id, title)) in SECTIONS.iter().enumerate() {
             let open = st.info_open == i;
-            let k = ui.ctx().animate_bool_with_time_and_easing(egui::Id::new(("planner-info", i)), open, 0.18, egui::emath::easing::cubic_out);
+            let k = ui.ctx().animate_bool_with_time_and_easing(
+                egui::Id::new(("planner-info", i)),
+                open,
+                crate::theme::motion(0.18),
+                egui::emath::easing::cubic_out,
+            );
             // header
             let w = ui.available_width();
             let (h, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());

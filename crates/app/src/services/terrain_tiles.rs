@@ -69,8 +69,68 @@ pub fn fetch(lat: f64, lon: f64, radius_m: f64) -> Result<Dem, String> {
     fetch_with(&template, cache.as_deref(), lat, lon, radius_m, ZOOM)
 }
 
+/// The most tiles the ground under the shadow map is made of (a side of six: 1 536 pixels).
+pub const VIEW_MAX_TILES: usize = 36;
+/// The zooms the shadow map's ground is read at: the coarsest (a whole country in view) and the finest (about 30 m).
+pub const VIEW_MIN_ZOOM: u8 = 6;
+pub const VIEW_MAX_ZOOM: u8 = 12;
+
+/// The zoom of a ground grid, from the share of the world its pixels span.
+pub fn zoom_of(dem: &Dem) -> f64 {
+    let span = dem.se.0 - dem.nw.0;
+    if dem.width == 0 || !(span.is_finite() && span > 0.0) {
+        return 0.0;
+    }
+    (dem.width as f64 / span / TILE as f64).log2()
+}
+
+/// Whether `dem` holds the whole of the world rectangle `nw`–`se` (Web Mercator, 0..1, y south).
+pub fn covers(dem: &Dem, nw: (f64, f64), se: (f64, f64)) -> bool {
+    dem.nw.0 <= nw.0 && dem.nw.1 <= nw.1 && dem.se.0 >= se.0 && dem.se.1 >= se.1
+}
+
+/// The tiles over the world rectangle `nw`–`se` at `zoom`: first tile and how many each way.
+fn view_range(nw: (f64, f64), se: (f64, f64), zoom: u8) -> Option<((u32, u32), (u32, u32))> {
+    if ![nw.0, nw.1, se.0, se.1].iter().all(|v| v.is_finite()) || se.0 <= nw.0 || se.1 <= nw.1 {
+        return None;
+    }
+    let n = f64::from(1u32 << zoom.min(20));
+    let tile = |w: f64| (w * n).floor().clamp(0.0, n - 1.0) as u32;
+    // (the world does not wrap here: a view over the antimeridian is cut at it)
+    let (x0, x1, y0, y1) = (tile(nw.0), tile(se.0), tile(nw.1), tile(se.1));
+    Some(((x0, y0), (x1 - x0 + 1, y1 - y0 + 1)))
+}
+
+/// The zoom to read the ground at for the rectangle `nw`–`se`: `ideal`, or the finest one under it whose tiles fit
+/// ([`VIEW_MAX_TILES`]); `None` when even the coarsest does not (too much of the world in view).
+pub fn plan_view(nw: (f64, f64), se: (f64, f64), ideal: u8) -> Option<u8> {
+    let top = ideal.clamp(VIEW_MIN_ZOOM, VIEW_MAX_ZOOM);
+    (VIEW_MIN_ZOOM..=top).rev().find(|z| view_range(nw, se, *z).is_some_and(|(_, (nx, ny))| nx as usize * ny as usize <= VIEW_MAX_TILES))
+}
+
+/// The ground under the world rectangle `nw`–`se` (a little more: whole tiles), read at the zoom [`plan_view`] gives for
+/// `ideal`; needs the network unless the tiles were fetched before.
+pub fn fetch_view(nw: (f64, f64), se: (f64, f64), ideal: u8) -> Result<Dem, String> {
+    let template = std::env::var("LIGHT_STUDIO_TERRAIN_URL").ok().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| SERVICE.to_string());
+    let cache = crate::paths::config_dir().map(|d| d.join("terrain-tiles"));
+    fetch_view_with(&template, cache.as_deref(), nw, se, ideal)
+}
+
+fn fetch_view_with(template: &str, cache: Option<&Path>, nw: (f64, f64), se: (f64, f64), ideal: u8) -> Result<Dem, String> {
+    let zoom = plan_view(nw, se, ideal).ok_or("too much of the world is in view for the shadows: zoom in")?;
+    let (first, count) = view_range(nw, se, zoom).ok_or("that area has no terrain tiles")?;
+    let (lat, _) = map_tiles::unproject(0.5, (nw.1 + se.1) / 2.0);
+    fetch_range(template, cache, first, count, zoom, lat)
+}
+
 fn fetch_with(template: &str, cache: Option<&Path>, lat: f64, lon: f64, radius_m: f64, zoom: u8) -> Result<Dem, String> {
-    let ((x0, y0), (nx, ny)) = tile_range(lat, lon, radius_m, zoom).ok_or("that place has no terrain tiles")?;
+    let (first, count) = tile_range(lat, lon, radius_m, zoom).ok_or("that place has no terrain tiles")?;
+    fetch_range(template, cache, first, count, zoom, lat)
+}
+
+/// The tiles `count` (columns, rows) from `first` at `zoom`, joined into one grid; `lat` sizes a pixel on the ground.
+fn fetch_range(template: &str, cache: Option<&Path>, first: (u32, u32), count: (u32, u32), zoom: u8, lat: f64) -> Result<Dem, String> {
+    let ((x0, y0), (nx, ny)) = (first, count);
     let (nx, ny) = (nx as usize, ny as usize);
     let coords: Vec<(usize, usize, u32, u32)> = (0..ny).flat_map(|j| (0..nx).map(move |i| (i, j, x0 + i as u32, y0 + j as u32))).collect();
     // a few at a time
@@ -94,14 +154,13 @@ fn fetch_with(template: &str, cache: Option<&Path>, lat: f64, lon: f64, radius_m
         }
     }
     let n = f64::from(1u32 << zoom.min(20));
-    let (_, wy) = map_tiles::project(lat, lon);
     Ok(Dem {
         width,
         height,
         heights,
         nw: (f64::from(x0) / n, f64::from(y0) / n),
         se: (f64::from(x0 + nx as u32) / n, f64::from(y0 + ny as u32) / n),
-        m_per_px: EQUATOR_M * lat.to_radians().cos() / (TILE as f64 * n) * (1.0 + 0.0 * wy),
+        m_per_px: EQUATOR_M * lat.to_radians().cos() / (TILE as f64 * n),
     })
 }
 
@@ -268,5 +327,57 @@ mod tests {
     fn a_service_that_is_not_there_says_so() {
         let e = fetch_with("http://127.0.0.1:1/{z}/{x}/{y}.png", None, 43.3, -2.0, 5_000.0, 11).unwrap_err();
         assert!(e.contains("online") || e.contains("terrain"), "{e}");
+    }
+
+    /// The world rectangle round a place, `half_m` metres each way.
+    fn rect_round(lat: f64, lon: f64, half_m: f64) -> ((f64, f64), (f64, f64)) {
+        let (wx, wy) = map_tiles::project(lat, lon);
+        let r = half_m / (EQUATOR_M * lat.to_radians().cos());
+        ((wx - r, wy - r), (wx + r, wy + r))
+    }
+
+    #[test]
+    fn the_view_zoom_drops_until_the_tiles_fit_and_a_whole_continent_is_refused() {
+        // 30 km each way fits at the finest zoom asked; 300 km does not and takes a coarser one; Europe is too much
+        let (nw, se) = rect_round(43.3, -2.0, 15_000.0);
+        assert_eq!(plan_view(nw, se, 11), Some(11));
+        assert_eq!(plan_view(nw, se, 20), Some(VIEW_MAX_ZOOM), "no finer than the data");
+        let (nw, se) = rect_round(43.3, -2.0, 150_000.0);
+        let z = plan_view(nw, se, 12).unwrap();
+        assert!((VIEW_MIN_ZOOM..12).contains(&z), "{z}");
+        let (nw, se) = rect_round(50.0, 10.0, 3_000_000.0);
+        assert_eq!(plan_view(nw, se, 12), None);
+        assert_eq!(plan_view((0.5, 0.5), (0.4, 0.6), 10), None, "an upside-down rectangle");
+        assert_eq!(plan_view((f64::NAN, 0.5), (0.6, 0.6), 10), None);
+    }
+
+    #[test]
+    fn a_view_of_tiles_has_its_zoom_and_covers_what_was_asked_for() {
+        // tiles of a flat 100 m, put on the disk where the cache keeps them: no network is needed
+        let (nw, se) = rect_round(43.3, -2.0, 20_000.0);
+        let zoom = plan_view(nw, se, 11).unwrap();
+        let (first, count) = view_range(nw, se, zoom).unwrap();
+        let dir = std::env::temp_dir().join(format!("ls-terrain-view-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let img = image::RgbaImage::from_fn(TILE as u32, TILE as u32, |_, _| {
+            let v: f64 = 32_768.0 + 100.0;
+            image::Rgba([(v / 256.0).floor() as u8, (v % 256.0).floor() as u8, 0, 255])
+        });
+        let mut png = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        for j in 0..count.1 {
+            for i in 0..count.0 {
+                write_cache(&dir.join(zoom.to_string()).join((first.0 + i).to_string()).join(format!("{}.png", first.1 + j)), &png);
+            }
+        }
+        let dem = fetch_view_with("http://127.0.0.1:1/{z}/{x}/{y}.png", Some(&dir), nw, se, 11).unwrap();
+        assert!(covers(&dem, nw, se));
+        assert!((zoom_of(&dem) - f64::from(zoom)).abs() < 1e-9, "{}", zoom_of(&dem));
+        assert!(dem.heights.iter().all(|h| (*h - 100.0).abs() < 0.01));
+        assert!(dem.m_per_px > 30.0 && dem.m_per_px < 80.0, "{}", dem.m_per_px);
+        // a rectangle bigger than the grid is not covered
+        let (big_nw, big_se) = rect_round(43.3, -2.0, 60_000.0);
+        assert!(!covers(&dem, big_nw, big_se));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

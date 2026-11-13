@@ -332,10 +332,9 @@ impl Page<'_> {
         let skyline = rt.horizon.as_ref().filter(|h| h.key == super::horizon::key_of(st)).and_then(|h| h.data.as_ref().ok().cloned());
         let waiting = st.find_skyline && skyline.is_none();
         ui.add_enabled_ui(!waiting, |ui| {
-            let go = text_button(ui, "plannerFindGo", "Find the Dates", false).clicked() | std::mem::take(&mut rt.find_load);
+            let go = text_button(ui, "plannerFindGo", "Find the Dates", false).clicked() | (!waiting && std::mem::take(&mut rt.find_load));
             if go {
                 let start = self.c.start;
-                // (the skyline is the one condition a saved search cannot hold)
                 let mut spec = Spec::of(&PlannerState { find_skyline: false, ..st.clone() }).unwrap_or_default();
                 spec.days = st.find_days;
                 let mut conditions = spec.conditions();
@@ -356,11 +355,11 @@ impl Page<'_> {
                 }
             }
         });
-        let spec = Spec::of(st);
+        let spec = Spec::with_skyline(st, skyline.as_deref());
         let tip = if spec.is_some() {
             "Keep these conditions with the place and see when they next happen"
         } else {
-            "A search over the skyline cannot be saved: it needs the terrain"
+            "A search over the skyline can be saved once the terrain is read: turn on Mountains"
         };
         let full = st.searches.len() >= saved::MAX_SEARCHES;
         ui.add_enabled_ui(spec.is_some() && !full, |ui| {
@@ -694,7 +693,7 @@ impl Page<'_> {
 
 /// The cloud forecast is asked for the place while the card is open; the answer is reused for an hour (a failure for ten minutes).
 pub(super) fn ask_clouds(app: &mut crate::App) {
-    if cfg!(test) || !app.planner.find_open || app.planner.clouds_pending || !app.ui.planner.placed {
+    if cfg!(test) || !(app.planner.find_open || app.planner.sky_open) || app.planner.clouds_pending || !app.ui.planner.placed {
         return;
     }
     let (lat, lon) = (app.ui.planner.lat, app.ui.planner.lon);

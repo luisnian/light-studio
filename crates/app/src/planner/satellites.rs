@@ -23,6 +23,8 @@ const TRANSIT_STEP: f64 = 1.0;
 /// Closest approach, in degrees, worth refining.
 const NEAR_DEG: f64 = 2.5;
 const EARTH_KM: f64 = 6378.137;
+/// The Earth's flattening (WGS84).
+const FLATTENING: f64 = 1.0 / 298.257_223_563;
 const SUN_KM: f64 = 696_000.0;
 const MOON_KM: f64 = 1737.4;
 
@@ -226,6 +228,77 @@ fn relative(a: Horizontal, b: Horizontal) -> (f64, f64) {
     (dx * b.alt.to_radians().cos(), a.alt - b.alt)
 }
 
+/// The line on the ground from which a transit is seen: the points where the line from the satellite away from the Sun (or the
+/// Moon) meets the Earth, followed for 40 seconds either side of the closest approach. The satellite is in front of the disc for
+/// whoever stands on it; the disc covers it to a few kilometres either side (its radius times the satellite's distance).
+/// Latitude and longitude of each second, on the ground.
+pub(super) fn transit_line(orbit: &Orbit, target: Target, around: f64) -> Vec<(f64, f64)> {
+    let mut line = Vec::new();
+    for k in -40..=40 {
+        let t = around + f64::from(k);
+        let (Some(p), jd) = (orbit.position(t), jd_from_unix(t)) else { continue };
+        // in the Earth-fixed frame, with the Earth stretched along its axis into a sphere (so that the ellipsoid is met exactly)
+        let g = gmst(jd).to_radians();
+        let (c, sn) = (g.cos(), g.sin());
+        let fixed = |v: [f64; 3]| [c * v[0] + sn * v[1], -sn * v[0] + c * v[1], v[2]];
+        let stretch = 1.0 / (1.0 - FLATTENING);
+        let unit = |v: [f64; 3]| {
+            let n = v.iter().map(|c| c * c).sum::<f64>().sqrt();
+            [v[0] / n, v[1] / n, v[2] / n]
+        };
+        let sat = fixed(p.km);
+        // where the line from the satellite, away from the body, meets the Earth
+        let meet = |u: [f64; 3]| -> Option<[f64; 3]> {
+            let (s, u) = ([sat[0], sat[1], sat[2] * stretch], [u[0], u[1], u[2] * stretch]);
+            let uu = u.iter().map(|c| c * c).sum::<f64>();
+            let su = (s[0] * u[0] + s[1] * u[1] + s[2] * u[2]) / uu;
+            let disc = su * su - (s.iter().map(|c| c * c).sum::<f64>() - EARTH_KM * EARTH_KM) / uu;
+            if disc < 0.0 || !disc.is_finite() {
+                return None;
+            }
+            // the nearer of the two crossings
+            let lambda = su - disc.sqrt();
+            (lambda > 0.0).then(|| [s[0] - lambda * u[0], s[1] - lambda * u[1], (s[2] - lambda * u[2]) / stretch])
+        };
+        let ground = match target {
+            Target::Sun => {
+                let u = sun_direction(jd);
+                meet(fixed(u))
+            }
+            Target::Moon => {
+                // the Moon is near enough for its direction to depend on where one stands (up to a degree): start from the
+                // Earth's centre and correct it from the ground point found
+                let m = moon_coords(jd);
+                let (ra, dec) = (m.ra.to_radians(), m.dec.to_radians());
+                let moon = fixed([dec.cos() * ra.cos() * m.dist_km, dec.cos() * ra.sin() * m.dist_km, dec.sin() * m.dist_km]);
+                let mut found = meet(unit(moon));
+                for _ in 0..3 {
+                    let Some(at) = found else { break };
+                    found = meet(unit([moon[0] - at[0], moon[1] - at[1], moon[2] - at[2]]));
+                }
+                found
+            }
+        };
+        let Some(ground) = ground else { continue };
+        let lon = ground[1].atan2(ground[0]).to_degrees();
+        let p = ground[0].hypot(ground[1]);
+        let lat = (ground[2] / (p * (1.0 - 0.006_694_379_990_14))).atan().to_degrees();
+        line.push((lat, lon));
+    }
+    line
+}
+
+/// How far (km) the nearest point of a line on the ground is from a place.
+pub(super) fn line_distance_km(line: &[(f64, f64)], lat: f64, lon: f64) -> Option<f64> {
+    line.iter()
+        .map(|&(la, lo)| {
+            let (dla, dlo) = ((la - lat).to_radians(), ((lo - lon + 540.0).rem_euclid(360.0) - 180.0).to_radians());
+            let a = (dla / 2.0).sin().powi(2) + lat.to_radians().cos() * la.to_radians().cos() * (dlo / 2.0).sin().powi(2);
+            2.0 * 6371.0 * a.sqrt().clamp(0.0, 1.0).asin()
+        })
+        .min_by(|a, b| a.total_cmp(b))
+}
+
 /// The passes and the transits of every orbit for the next [`DAYS_AHEAD`] days.
 pub(super) fn compute(orbits: &[Orbit], obs: Observer, from: f64) -> Report {
     let to = from + DAYS_AHEAD * DAY;
@@ -374,6 +447,18 @@ impl Page<'_> {
             );
             if resp.clicked() {
                 super::strip::jump_to(st, tr.unix, off);
+                let same = rt.sat_pick.as_ref().is_some_and(|(n, _, u)| *n == tr.name && *u == tr.unix);
+                rt.sat_pick = (!same).then(|| (tr.name.clone(), tr.target, tr.unix));
+            }
+        }
+        if let Some((line, _, _)) = &self.sat_line {
+            match line_distance_km(line, st.lat, st.lon) {
+                Some(d) if d < 1.0 => note(ui, crate::i18n::tr("You are on the line of the picked transit.")),
+                Some(d) => note(
+                    ui,
+                    &format!("{} {d:.1} km {}", crate::i18n::tr("The line of the picked transit (on the map) is"), crate::i18n::tr("from here.")),
+                ),
+                None => note(ui, crate::i18n::tr("The picked transit is not seen from the ground.")),
             }
         }
         note(
@@ -386,7 +471,7 @@ impl Page<'_> {
 }
 
 /// `hh:mm:ss` at the offset.
-fn clock_seconds(unix: f64, offset: i32) -> String {
+pub(super) fn clock_seconds(unix: f64, offset: i32) -> String {
     let s = (unix + f64::from(offset) * 60.0).rem_euclid(86_400.0) as u32;
     format!("{:02}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
 }
@@ -485,5 +570,38 @@ mod tests {
         assert!(r.passes.windows(2).all(|w| w[0].start <= w[1].start));
         assert!(r.transits.windows(2).all(|w| w[0].unix <= w[1].unix));
         assert!(r.transits.iter().all(|t| t.miss_deg <= t.radius_deg * 1.5 + 1e-9));
+    }
+
+    #[test]
+    fn from_the_line_of_a_transit_the_satellite_is_in_front_of_the_body() {
+        let orbits = parse(TEST_TLE).unwrap();
+        for (target, tolerance) in [(Target::Sun, 0.1), (Target::Moon, 0.5)] {
+            // a moment when the satellite is on the body's side of the Earth (else no place sees it in front of the body)
+            let t0 = (0..2880)
+                .map(|m| orbits[0].epoch + f64::from(m) * 60.0)
+                .find(|t| transit_line(&orbits[0], target, *t).len() > 70)
+                .expect("the satellite is on the body's side of the Earth at some moment in two days");
+            let line = transit_line(&orbits[0], target, t0);
+            for k in [10usize, 40, 70] {
+                let Some(&(lat, lon)) = line.get(k) else { continue };
+                let obs = Observer::new(lat, lon);
+                let t = t0 - 40.0 + k as f64;
+                let sat = look(orbits[0].position(t).unwrap().km, jd_from_unix(t), obs).0;
+                let body = if target == Target::Sun { sun_horizontal(t, obs) } else { moon_horizontal(t, obs) };
+                let apart = separation(sat, body);
+                assert!(apart < tolerance, "{target:?} at second {k}: {apart}° apart");
+            }
+        }
+        // the distance to the line is zero on it and grows away from it
+        let t0 = (0..2880).map(|m| orbits[0].epoch + f64::from(m) * 60.0).find(|t| transit_line(&orbits[0], Target::Sun, *t).len() > 70).unwrap();
+        let line = transit_line(&orbits[0], Target::Sun, t0);
+        let (la, lo) = line[40];
+        assert!(line_distance_km(&line, la, lo).unwrap() < 0.01);
+        assert!(line_distance_km(&line, la + 3.0, lo).unwrap() > 100.0);
+    }
+
+    #[test]
+    fn a_line_with_no_points_has_no_distance() {
+        assert!(line_distance_km(&[], 0.0, 0.0).is_none());
     }
 }

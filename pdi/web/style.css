@@ -120,3 +120,6 @@ body:has(dialog[open]) > nav.bar{visibility:hidden}
 #pad{position:absolute;z-index:1000;right:max(var(--gap),env(safe-area-inset-right));bottom:calc(84px + var(--gap) + env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(3,46px);grid-auto-rows:46px;gap:4px;padding:6px}
 #pad button{padding:0;font-size:15px;border-radius:12px}
 #adjust .bar .fab{font-size:14px}
+
+.listhead{margin:18px 16px 4px;font-size:13px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
+#routeList{list-style:none;margin:0;padding:0}

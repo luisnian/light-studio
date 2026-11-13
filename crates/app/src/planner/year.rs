@@ -326,7 +326,7 @@ mod tests {
     }
 
     fn night(core: Vec<Span>, moon_up: Vec<Span>) -> NightProfile {
-        NightProfile { day_start: 0.0, night: vec![span(20.0, 30.0)], dark: vec![span(22.0, 28.0)], moon_up, core }
+        NightProfile { day_start: 0.0, night: vec![span(20.0, 30.0)], dark: vec![span(22.0, 28.0)], moon_up, core, best_core_alt: 30.0 }
     }
 
     #[test]

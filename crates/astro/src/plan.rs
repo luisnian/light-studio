@@ -9,6 +9,7 @@
 //! Golden hour is the Sun between -4 and +6 degrees, blue hour between -6 and -4 (the usual photographers'
 //! convention). Twilights are the Sun at -6 (civil), -12 (nautical) and -18 degrees (astronomical).
 
+use crate::horizon::Skyline;
 use crate::moon::{moon_horizontal, moon_rise_altitude};
 use crate::sky::core_horizontal;
 use crate::sun::{Horizontal, Observer, sun_horizontal};
@@ -276,6 +277,53 @@ pub fn plan_day(obs: Observer, start: f64) -> DayPlan {
     DayPlan { start, sun, moon, core }
 }
 
+/// When a body is really seen over the skyline of the place (not over the flat horizon).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Visible {
+    /// The stretches of the day in which the body's centre stands above the skyline in its own direction.
+    pub spans: Vec<Span>,
+    /// The first and the last moment of those stretches that are not the edges of the day, with the direction there.
+    pub first: Option<(f64, f64)>,
+    pub last: Option<(f64, f64)>,
+    /// Minutes lost to the terrain against the flat horizon (`flat` is the time above the body's own rise altitude;
+    /// negative when the skyline is below the flat horizon).
+    pub lost_min: f64,
+}
+
+/// The Sun, the Moon and the Milky Way's core over the real skyline for the 24 hours from `start`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RealDay {
+    pub sun: Visible,
+    pub moon: Visible,
+    pub core: Visible,
+}
+
+fn visible(position: &dyn Fn(f64) -> Horizontal, flat_alt: &dyn Fn(f64) -> f64, sky: &Skyline, t0: f64, t1: f64) -> Visible {
+    let over = |t: f64| {
+        let h = position(t);
+        h.alt.is_finite() && h.alt > sky.altitude_at(h.az)
+    };
+    let spans = spans(&over, t0, t1, STEP);
+    let first = spans.iter().find(|s| s.start > t0).map(|s| (s.start, position(s.start).az));
+    let last = spans.iter().rev().find(|s| s.end < t1).map(|s| (s.end, position(s.end).az));
+    let flat = |t: f64| position(t).alt > flat_alt(t);
+    let flat_s: f64 = self::spans(&flat, t0, t1, STEP).iter().map(|s| s.end - s.start).sum();
+    let real_s: f64 = spans.iter().map(|s| s.end - s.start).sum();
+    Visible { spans, first, last, lost_min: (flat_s - real_s) / 60.0 }
+}
+
+/// As the rise and set of [`plan_day`], but over the real skyline of the place (see [`crate::horizon`]): a Sun that
+/// comes up behind a ridge an hour after the flat-horizon sunrise, a Moon that sets behind a summit, the core hidden by
+/// the mountains. The terrain is what the heights give: trees and buildings are not in it.
+pub fn real_day(obs: Observer, start: f64, sky: &Skyline) -> RealDay {
+    let end = start + DAY;
+    RealDay {
+        sun: visible(&|t| sun_horizontal(t, obs), &|_| SUN_RISE_ALT, sky, start, end),
+        moon: visible(&|t| moon_horizontal(t, obs), &moon_rise_altitude, sky, start, end),
+        core: visible(&|t| core_horizontal(t, obs), &|_| 0.0, sky, start, end),
+    }
+}
+
 /// The stretches of the night that starts on the evening of the local day beginning at `day_start`
 /// (12:00 to 12:00 the next day) in which the core is above [`CORE_MIN_ALT`] in an astronomically
 /// dark sky. One night is one stretch, even across midnight.
@@ -299,6 +347,36 @@ pub struct NightProfile {
     pub moon_up: Vec<Span>,
     /// The core above [`CORE_MIN_ALT`] in the dark.
     pub core: Vec<Span>,
+    /// The core's highest altitude in the dark, degrees (-90 if the sky is never dark).
+    pub best_core_alt: f64,
+}
+
+impl NightProfile {
+    /// The night as a [`NightScore`]: the core's dark minutes, those with the Moon down, and its best altitude.
+    pub fn score(&self) -> NightScore {
+        let minutes = |s: &[Span]| s.iter().map(Span::minutes).sum::<f64>();
+        let mut moonless = 0.0;
+        for c in &self.core {
+            let mut covered = 0.0;
+            let mut cuts: Vec<(f64, f64)> = self.moon_up.iter().map(|m| (m.start.max(c.start), m.end.min(c.end))).filter(|(a, b)| b > a).collect();
+            cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let mut at = c.start;
+            for (a, b) in cuts {
+                let a = a.max(at);
+                if b > a {
+                    covered += b - a;
+                    at = b;
+                }
+            }
+            moonless += (c.end - c.start - covered) / 60.0;
+        }
+        NightScore {
+            day_start: self.day_start,
+            dark_core_minutes: minutes(&self.core),
+            moonless_minutes: moonless,
+            best_altitude: self.best_core_alt,
+        }
+    }
 }
 
 /// The night that starts on the evening of the local day beginning at `day_start`, in stretches.
@@ -313,6 +391,11 @@ pub fn night_profile(obs: Observer, day_start: f64, step: f64) -> NightProfile {
         dark: spans(&|t| sun(t) < ASTRONOMICAL, t0, t1, step),
         moon_up: spans(&|t| moon_horizontal(t, obs).alt > MOON_DOWN_ALT, t0, t1, step),
         core: spans(&|t| sun(t) < ASTRONOMICAL && core(t) > CORE_MIN_ALT, t0, t1, step),
+        best_core_alt: {
+            let n = ((t1 - t0) / step.max(1.0)).floor() as usize;
+            let best = (0..=n).map(|i| t0 + i as f64 * step.max(1.0)).filter(|&t| sun(t) < ASTRONOMICAL).map(core).fold(f64::NEG_INFINITY, f64::max);
+            if best.is_finite() { best } else { -90.0 }
+        },
     }
 }
 
@@ -512,5 +595,51 @@ mod tests {
             let _ = plan_day(Observer::new(lat, lon), t);
             let _ = score_night(Observer::new(lat, lon), t, 600.0);
         }
+    }
+}
+
+#[cfg(test)]
+mod real_day_tests {
+    use super::*;
+    use crate::horizon::Skyline;
+
+    fn flat(alt: f64) -> Skyline {
+        Skyline { near: 500.0, far: 60_000.0, ground: 0.0, alt: vec![alt; 120], dist: vec![1000.0; 120], height: vec![0.0; 120] }
+    }
+
+    #[test]
+    fn a_ridge_delays_the_sunrise_and_a_flat_skyline_does_not() {
+        let obs = Observer::new(43.3, -1.98);
+        let start = crate::time::unix_from_civil(2026, 6, 21, 0, 0, 0) - 7200.0;
+        let day = plan_day(obs, start);
+        let low = real_day(obs, start, &flat(SUN_RISE_ALT));
+        let (rise, _) = low.sun.first.expect("sunrise");
+        assert!((rise - day.sun.rise.expect("flat sunrise")).abs() < 120.0);
+        assert!(low.sun.lost_min.abs() < 3.0);
+        let ridge = real_day(obs, start, &flat(10.0));
+        let (late, _) = ridge.sun.first.expect("sunrise over a 10° ridge");
+        assert!(late > rise + 1800.0, "a 10° ridge delays the sunrise by well over half an hour");
+        assert!(ridge.sun.lost_min > 60.0);
+    }
+
+    #[test]
+    fn a_high_skyline_hides_the_moon_and_the_core() {
+        let obs = Observer::new(43.3, -1.98);
+        let start = crate::time::unix_from_civil(2026, 7, 15, 0, 0, 0) - 7200.0;
+        let wall = real_day(obs, start, &flat(60.0));
+        assert!(wall.core.spans.is_empty() && wall.core.lost_min > 60.0, "a 60° wall hides the core");
+        assert!(wall.moon.lost_min >= 0.0 && wall.sun.lost_min > 300.0);
+        let open = real_day(obs, start, &flat(-5.0));
+        assert!(open.core.lost_min <= 0.0, "a skyline below the horizon loses nothing");
+    }
+
+    #[test]
+    fn a_night_profile_scores_like_score_night() {
+        let obs = Observer::new(43.3, -1.98);
+        let day = crate::time::unix_from_civil(2026, 7, 15, 0, 0, 0) - 7200.0;
+        let (a, b) = (night_profile(obs, day, 300.0).score(), score_night(obs, day, 300.0));
+        assert!((a.dark_core_minutes - b.dark_core_minutes).abs() < 10.0, "{a:?} {b:?}");
+        assert!((a.moonless_minutes - b.moonless_minutes).abs() < 10.0, "{a:?} {b:?}");
+        assert!((a.best_altitude - b.best_altitude).abs() < 1.0);
     }
 }

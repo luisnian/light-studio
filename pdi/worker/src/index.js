@@ -440,6 +440,66 @@ async function revokeKey(id, env) {
   return json({ ok: true, id });
 }
 
+// ---------- Rutas (del Mac al móvil) ----------
+const MAX_ROUTE_POINTS = 5000;
+const MAX_ROUTE_WAYPOINTS = 200;
+const finite = (v) => typeof v === 'number' && Number.isFinite(v);
+const okPlace = (la, lo) => finite(la) && finite(lo) && Math.abs(la) <= 90 && Math.abs(lo) <= 180;
+const total = (v) => (finite(v) && v >= 0 && v < 1e8 ? Math.round(v) : 0);
+
+function normalizeRoute(r) {
+  if (!r || typeof r !== 'object' || typeof r.id !== 'string' || !UUID_RE.test(r.id)) throw new HttpError(400, 'bad_route', 'La ruta necesita un id (UUID)');
+  const points = [];
+  for (const p of Array.isArray(r.points) ? r.points : []) {
+    if (points.length >= MAX_ROUTE_POINTS) break;
+    if (!Array.isArray(p) || !okPlace(p[0], p[1])) continue;
+    points.push(finite(p[2]) ? [p[0], p[1], Math.round(p[2])] : [p[0], p[1]]);
+  }
+  if (points.length < 2) throw new HttpError(400, 'bad_route', 'La ruta necesita al menos dos puntos');
+  const waypoints = [];
+  for (const w of Array.isArray(r.waypoints) ? r.waypoints : []) {
+    if (waypoints.length >= MAX_ROUTE_WAYPOINTS) break;
+    if (w && okPlace(w.lat, w.lon)) waypoints.push({ name: str(w.name, 120), lat: w.lat, lon: w.lon });
+  }
+  return {
+    id: r.id.toLowerCase(),
+    name: str(r.name, 120) || 'Ruta',
+    distance_m: total(r.distance_m),
+    ascent_m: total(r.ascent_m),
+    descent_m: total(r.descent_m),
+    data: JSON.stringify({ points, waypoints }),
+  };
+}
+
+async function putRoute(request, env) {
+  const r = normalizeRoute(await readJson(request));
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    'INSERT INTO routes (id, name, distance_m, ascent_m, descent_m, data, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7) ' +
+      'ON CONFLICT(id) DO UPDATE SET name=?2, distance_m=?3, ascent_m=?4, descent_m=?5, data=?6, updated_at=?7',
+  ).bind(r.id, r.name, r.distance_m, r.ascent_m, r.descent_m, r.data, now).run();
+  return json({ ok: true, id: r.id }, 201);
+}
+
+async function listRoutes(env) {
+  const { results } = await env.DB.prepare('SELECT id, name, distance_m, ascent_m, descent_m, updated_at FROM routes ORDER BY updated_at DESC LIMIT 200').all();
+  return json({ routes: results });
+}
+
+async function getRoute(id, env) {
+  const row = await env.DB.prepare('SELECT id, name, distance_m, ascent_m, descent_m, data, updated_at FROM routes WHERE id = ?1').bind(id).first();
+  if (!row) return err(404, 'not_found', 'Esa ruta no está en el Worker');
+  const { data, ...rest } = row;
+  return json({ ...rest, ...JSON.parse(data) });
+}
+
+async function deleteRoute(request, env) {
+  const b = await readJson(request);
+  if (typeof b.id !== 'string' || !UUID_RE.test(b.id)) throw new HttpError(400, 'bad_route', 'Falta el id de la ruta');
+  await env.DB.prepare('DELETE FROM routes WHERE id = ?1').bind(b.id.toLowerCase()).run(); // si no estaba, tampoco es un error
+  return json({ ok: true, id: b.id.toLowerCase() });
+}
+
 // ---------- Enrutado ----------
 export default {
   async fetch(request, env) {
@@ -483,6 +543,11 @@ export default {
       if (path === '/api/v1/sync/push' && m === 'POST') return await push(request, env);
       if (path === '/api/v1/sync/pull' && m === 'GET') return await pull(url, env);
       if (path === '/api/v1/sync/ack' && m === 'POST') return await ack(request, env, who);
+      if (path === '/api/v1/routes' && m === 'POST') return await putRoute(request, env);
+      if (path === '/api/v1/routes' && m === 'GET') return await listRoutes(env);
+      if (path === '/api/v1/routes/delete' && m === 'POST') return await deleteRoute(request, env);
+      const rm = path.match(/^\/api\/v1\/routes\/([0-9a-f-]{36})$/i);
+      if (rm && m === 'GET') return await getRoute(rm[1].toLowerCase(), env);
       if (path === '/api/v1/attachments' && (m === 'POST' || m === 'PUT')) return await putAttachment(request, url, env);
       if (path.startsWith('/api/v1/attachments/') && m === 'GET') return await getAttachment(decodeURIComponent(path.slice('/api/v1/attachments/'.length)), env);
 

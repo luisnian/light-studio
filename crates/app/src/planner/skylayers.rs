@@ -18,6 +18,8 @@ use crate::map::Cam;
 pub(super) const SUNRISE: Color32 = Color32::from_rgb(250, 219, 60);
 pub(super) const SUNSET: Color32 = Color32::from_rgb(252, 80, 17);
 pub(super) const SUN_NOW: Color32 = Color32::from_rgb(235, 170, 50);
+/// The Sun altitude from which the limits of an eclipse path are drawn as they are (below it the shadow is smeared along the ground).
+const EXACT_LIMITS_ALT: f64 = 10.0;
 pub(super) const MOONRISE: Color32 = Color32::from_rgb(66, 197, 228);
 pub(super) const MOONSET: Color32 = Color32::from_rgb(61, 90, 193);
 pub(super) const MOON_NOW: Color32 = Color32::from_rgb(58, 140, 214);
@@ -365,19 +367,32 @@ impl Page<'_> {
                 }
             }
         }
-        // the umbra: a strip between the two edges, as quads
+        // the umbra: a strip between the two limits of the path, as quads. With the Sun well up the limits are the true
+        // ones (the edge of the umbra cut with the Earth); near the horizon the shadow is smeared along the ground and
+        // the strip falls back to a width either side of the line
+        let umbra = |total: bool| {
+            if total { Color32::from_rgba_unmultiplied(15, 20, 40, 170) } else { Color32::from_rgba_unmultiplied(120, 70, 20, 150) }
+        };
         for w in pts.windows(2) {
             let [(a, pa), (b, pb)] = w else { continue };
             if !joined(*a, *b) {
                 continue;
             }
+            let exact = pa.sun_alt >= EXACT_LIMITS_ALT && pb.sun_alt >= EXACT_LIMITS_ALT;
+            let fill = umbra(pa.half_width_km >= 0.0);
+            if exact {
+                let (la, ra, lb, rb) = (at(pa.left.0, pa.left.1), at(pa.right.0, pa.right.1), at(pb.left.0, pb.left.1), at(pb.right.0, pb.right.1));
+                if joined(*a, la) && joined(*a, ra) && joined(*b, lb) && joined(*b, rb) {
+                    painter.add(Shape::convex_polygon(vec![la, lb, rb, ra], fill, Stroke::NONE));
+                    for (p, q) in [(la, lb), (ra, rb)] {
+                        painter.line_segment([p, q], Stroke::new(1.2, fill.to_opaque().gamma_multiply(0.9)));
+                    }
+                    painter.line_segment([*a, *b], Stroke::new(2.0, centre));
+                    continue;
+                }
+            }
             let n = side(*a, *b);
             let (wa, wb) = ((pa.half_width_km.abs() * px_per_km(pa.lat)) as f32, (pb.half_width_km.abs() * px_per_km(pb.lat)) as f32);
-            let fill = if pa.half_width_km >= 0.0 {
-                Color32::from_rgba_unmultiplied(15, 20, 40, 170)
-            } else {
-                Color32::from_rgba_unmultiplied(120, 70, 20, 150)
-            };
             painter.add(Shape::convex_polygon(vec![*a + n * wa, *b + n * wb, *b - n * wb, *a - n * wa], fill, Stroke::NONE));
             painter.line_segment([*a, *b], Stroke::new(2.0, centre));
         }
