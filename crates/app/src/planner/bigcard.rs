@@ -96,8 +96,8 @@ impl Page<'_> {
         let mut x = r.left() + 16.0;
         for (card, id, label) in CARDS {
             let text = crate::i18n::tr(label);
-            let galley = ui.painter().layout_no_wrap(text.to_string(), t.font(13.0), t.text);
-            let cell = Rect::from_min_size(pos2(x, r.top() + 13.0), vec2(galley.size().x + 24.0, 30.0));
+            let galley = ui.painter().layout_no_wrap(text.to_string(), t.medium(13.0), t.text);
+            let cell = Rect::from_min_size(pos2(x, r.top() + 13.0), vec2(galley.size().x + 26.0, 30.0));
             x = cell.right() + 4.0;
             if cell.right() > r.right() - 56.0 {
                 break;
@@ -106,18 +106,18 @@ impl Page<'_> {
             let on = card == current;
             let p = ui.painter().with_clip_rect(r);
             if on {
-                p.rect_filled(cell, R_CONTROL, t.tool_active);
+                crate::theme::paint_pill(&p, cell, 15.0, &t);
             } else if resp.hovered() {
-                p.rect_filled(cell, R_CONTROL, t.hover.gamma_multiply(0.6));
+                p.rect_filled(cell, 15.0, t.hover.gamma_multiply(0.6));
             }
             let color = if on {
-                t.text
+                t.on_pill
             } else if resp.hovered() {
                 t.text_label
             } else {
                 t.text_dim
             };
-            p.text(cell.center(), Align2::CENTER_CENTER, text, t.semibold(13.0), color);
+            p.text(cell.center(), Align2::CENTER_CENTER, text, t.medium(13.0), color);
             if resp.clicked() && !on {
                 open_only(rt, card);
             }

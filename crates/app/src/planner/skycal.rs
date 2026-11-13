@@ -191,7 +191,7 @@ impl Page<'_> {
             let day_start = date.unix_midnight_utc() - f64::from(c.offset) * 60.0;
             let resp = ui.interact(cell, ui.id().with(("planner-skycal", year, month, day)), Sense::click());
             if date == c.date {
-                p.rect_filled(cell, R_CONTROL, t.tool_active);
+                crate::theme::paint_chosen(&p, cell, R_CONTROL, &t);
             } else if resp.hovered() {
                 p.rect_filled(cell, R_CONTROL, t.hover.gamma_multiply(0.6));
             }

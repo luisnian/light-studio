@@ -441,16 +441,16 @@ impl Page<'_> {
         ];
         for (k, (label, on, chip)) in chips.into_iter().enumerate() {
             let on = on && (!matches!(chip, Chip::Radius(_)) || !rt.route_pois_off);
-            let g = painter.layout_no_wrap(label, t.font(11.0), if on { t.text } else { t.text_dim });
+            let g = painter.layout_no_wrap(label, t.medium(11.0), if on { t.on_pill } else { t.text_dim });
             let w = g.size().x + 14.0;
             let rect = Rect::from_min_size(pos2(x - w, r.top() + 5.0), vec2(w, 22.0));
             let resp = ui.interact(rect, egui::Id::new(("planner-route-chip", k)), Sense::click());
             if on {
-                painter.rect_filled(rect, 11.0, t.tool_active);
+                crate::theme::paint_pill(&painter, rect, 11.0, &t);
             } else if resp.hovered() {
                 painter.rect_filled(rect, 11.0, t.hover.gamma_multiply(0.5));
             }
-            painter.galley(pos2(rect.left() + 7.0, rect.center().y - g.size().y / 2.0), g, t.text);
+            painter.galley(pos2(rect.left() + 7.0, rect.center().y - g.size().y / 2.0), g, t.on_pill);
             if resp.clicked() {
                 match chip {
                     Chip::Radius(i) => rt.route_radius = i,

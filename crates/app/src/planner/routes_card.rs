@@ -119,7 +119,7 @@ impl Page<'_> {
                 let selected = rt.route_sel == Some(route.id);
                 let p = ui.painter();
                 if selected {
-                    p.rect_filled(row, 7.0, t.tool_active);
+                    crate::theme::paint_chosen(p, row, 8.0, &t);
                 } else if on_body.hovered() || on_eye.hovered() || on_bin.hovered() {
                     p.rect_filled(row, 7.0, t.hover.gamma_multiply(0.5));
                 }

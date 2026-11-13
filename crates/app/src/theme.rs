@@ -7,11 +7,11 @@ use std::sync::{Mutex, PoisonError};
 use egui::{Color32, Context, CornerRadius, FontFamily, FontId, Painter, Rect, Stroke, StrokeKind};
 
 /// Corner radius of the cards and panels floating over the map.
-pub const R_CARD: f32 = 12.0;
+pub const R_CARD: f32 = 16.0;
 /// Corner radius of buttons and fields.
-pub const R_CONTROL: f32 = 7.0;
+pub const R_CONTROL: f32 = 8.0;
 /// Corner radius of small tiles and chips.
-pub const R_TILE: f32 = 8.0;
+pub const R_TILE: f32 = 10.0;
 
 /// The red-light look is on (it keeps night vision: nothing but red reaches the eye).
 static RED_LIGHT: AtomicBool = AtomicBool::new(false);
@@ -94,6 +94,8 @@ pub fn motion(secs: f32) -> f32 {
 
 /// The family text of a heavier weight is set in (see [`install_fonts`]).
 const SEMIBOLD: &str = "semibold";
+/// The family of the in-between weight (buttons, tabs, small titles).
+const MEDIUM: &str = "medium";
 
 #[derive(Clone, Copy, Debug)]
 pub struct Tokens {
@@ -117,8 +119,11 @@ pub struct Tokens {
     pub card_stroke: Color32,
     pub divider: Color32,
     pub hover: Color32,
-    /// A tool or tab that is on.
+    /// A day, row or tile that is chosen: a warm tint of the accent, with the accent's hairline (see [`paint_chosen`]).
     pub tool_active: Color32,
+    /// A tab or segment that is on: a light pill, with `on_pill` text on it.
+    pub pill: Color32,
+    pub on_pill: Color32,
     pub accent: Color32,
     pub text: Color32,
     pub text_dim: Color32,
@@ -133,26 +138,28 @@ impl Tokens {
     pub fn dark() -> Tokens {
         Tokens {
             dark: true,
-            canvas: Color32::from_rgb(20, 20, 22),
-            chrome: Color32::from_rgb(29, 29, 31),
-            backdrop: Color32::from_rgb(16, 16, 18),
-            inset: Color32::from_rgb(40, 40, 43),
-            field: Color32::from_rgb(34, 34, 37),
-            shadow: Color32::from_black_alpha(96),
-            pick: Color32::from_rgb(76, 217, 100),
-            track: Color32::from_rgb(58, 58, 62),
-            field_border: Color32::from_rgb(72, 72, 78),
-            card_stroke: Color32::from_rgb(62, 62, 68),
-            divider: Color32::from_rgb(52, 52, 57),
-            hover: Color32::from_rgb(54, 54, 59),
-            tool_active: Color32::from_rgb(10, 98, 190),
-            accent: Color32::from_rgb(64, 156, 255),
-            text: Color32::from_rgb(240, 240, 243),
-            text_dim: Color32::from_rgb(160, 160, 169),
-            text_label: Color32::from_rgb(196, 196, 204),
-            text_disabled: Color32::from_rgb(104, 104, 112),
-            reject: Color32::from_rgb(255, 99, 90),
-            caution: Color32::from_rgb(255, 189, 68),
+            canvas: Color32::from_rgb(14, 14, 16),
+            chrome: Color32::from_rgb(22, 22, 24),
+            backdrop: Color32::from_rgb(9, 9, 11),
+            inset: Color32::from_rgb(31, 31, 34),
+            field: Color32::from_rgb(26, 26, 29),
+            shadow: Color32::from_black_alpha(130),
+            pick: Color32::from_rgb(104, 214, 134),
+            track: Color32::from_rgb(54, 54, 59),
+            field_border: Color32::from_rgb(66, 66, 72),
+            card_stroke: Color32::from_rgb(50, 50, 55),
+            divider: Color32::from_rgb(41, 41, 45),
+            hover: Color32::from_rgb(43, 43, 48),
+            tool_active: Color32::from_rgb(62, 49, 32),
+            pill: Color32::from_rgb(243, 243, 246),
+            on_pill: Color32::from_rgb(14, 14, 16),
+            accent: Color32::from_rgb(216, 168, 103),
+            text: Color32::from_rgb(245, 245, 247),
+            text_dim: Color32::from_rgb(161, 161, 166),
+            text_label: Color32::from_rgb(200, 200, 206),
+            text_disabled: Color32::from_rgb(106, 106, 112),
+            reject: Color32::from_rgb(255, 105, 97),
+            caution: Color32::from_rgb(255, 196, 87),
         }
     }
 
@@ -171,8 +178,10 @@ impl Tokens {
             card_stroke: Color32::from_rgb(208, 208, 214),
             divider: Color32::from_rgb(224, 224, 229),
             hover: Color32::from_rgb(228, 228, 233),
-            tool_active: Color32::from_rgb(190, 218, 252),
-            accent: Color32::from_rgb(0, 112, 224),
+            tool_active: Color32::from_rgb(246, 232, 208),
+            pill: Color32::from_rgb(29, 29, 31),
+            on_pill: Color32::from_rgb(252, 252, 253),
+            accent: Color32::from_rgb(168, 112, 28),
             text: Color32::from_rgb(29, 29, 31),
             text_dim: Color32::from_rgb(110, 110, 118),
             text_label: Color32::from_rgb(70, 70, 78),
@@ -199,7 +208,9 @@ impl Tokens {
             card_stroke: r(84),
             divider: r(66),
             hover: r(52),
-            tool_active: r(120),
+            tool_active: r(78),
+            pill: r(220),
+            on_pill: r(16),
             accent: r(255),
             text: r(255),
             text_dim: r(170),
@@ -230,26 +241,36 @@ impl Tokens {
     pub fn semibold(&self, size: f32) -> FontId {
         FontId::new(size, FontFamily::Name(SEMIBOLD.into()))
     }
-}
 
-/// Registers the semibold family. It is made of the fonts egui brings; where the system has a heavier face of its own it is
-/// put first.
-pub fn install_fonts(ctx: &Context) {
-    let mut fonts = egui::FontDefinitions::default();
-    let mut family = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
-    for (name, path) in system_bold_faces() {
-        if let Ok(bytes) = std::fs::read(path) {
-            fonts.font_data.insert(name.to_string(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
-            family.insert(0, name.to_string());
-            break;
-        }
+    /// The in-between weight at `size` points: tabs, buttons and labels that must read as controls without shouting.
+    pub fn medium(&self, size: f32) -> FontId {
+        FontId::new(size, FontFamily::Name(MEDIUM.into()))
     }
-    fonts.families.insert(FontFamily::Name(SEMIBOLD.into()), family);
-    ctx.set_fonts(fonts);
 }
 
-fn system_bold_faces() -> &'static [(&'static str, &'static str)] {
-    &[("system-bold", "/System/Library/Fonts/Supplemental/Arial Bold.ttf"), ("system-bold", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")]
+/// Registers Inter (SIL OFL, `assets/fonts`) as the interface's type: regular for text, and the heavier family used for
+/// titles and numbers. egui's own fonts stay behind it as fallbacks for the glyphs Inter lacks.
+pub fn install_fonts(ctx: &Context) {
+    use std::sync::Arc;
+    let mut fonts = egui::FontDefinitions::default();
+    let faces: [(&str, &[u8]); 3] = [
+        ("inter-regular", include_bytes!("../../../assets/fonts/Inter-Regular.ttf")),
+        ("inter-medium", include_bytes!("../../../assets/fonts/Inter-Medium.ttf")),
+        ("inter-semibold", include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf")),
+    ];
+    for (name, bytes) in faces {
+        fonts.font_data.insert(name.to_string(), Arc::new(egui::FontData::from_static(bytes)));
+    }
+    let fallback = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
+    let with = |first: &str| {
+        let mut family = vec![first.to_string()];
+        family.extend(fallback.iter().cloned());
+        family
+    };
+    fonts.families.insert(FontFamily::Proportional, with("inter-regular"));
+    fonts.families.insert(FontFamily::Name(MEDIUM.into()), with("inter-medium"));
+    fonts.families.insert(FontFamily::Name(SEMIBOLD.into()), with("inter-semibold"));
+    ctx.set_fonts(fonts);
 }
 
 /// The egui visuals made from the tokens.
@@ -264,6 +285,10 @@ fn visuals(t: &Tokens) -> egui::Visuals {
     v.selection.bg_fill = t.accent.gamma_multiply(0.45);
     v.selection.stroke = Stroke::new(1.0, t.accent);
     v.window_stroke = Stroke::new(1.0, t.card_stroke);
+    v.window_corner_radius = CornerRadius::same(R_CARD as u8);
+    v.menu_corner_radius = CornerRadius::same(R_TILE as u8);
+    v.window_shadow = egui::Shadow { offset: [0, 10], blur: 32, spread: 0, color: Color32::from_black_alpha(150) };
+    v.popup_shadow = v.window_shadow;
     v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, t.divider);
     v.widgets.inactive.bg_fill = t.inset;
     v.widgets.inactive.weak_bg_fill = t.inset;
@@ -284,8 +309,18 @@ pub fn apply(ctx: &Context) {
     ctx.set_visuals_of(egui::Theme::Dark, visuals(&if red_light() { Tokens::red() } else { Tokens::dark() }));
     ctx.set_visuals_of(egui::Theme::Light, visuals(&Tokens::light()));
     ctx.all_styles_mut(|s| {
-        s.spacing.item_spacing = egui::vec2(8.0, 6.0);
-        s.spacing.button_padding = egui::vec2(10.0, 4.0);
+        s.spacing.item_spacing = egui::vec2(8.0, 7.0);
+        s.spacing.button_padding = egui::vec2(12.0, 5.0);
+        s.spacing.interact_size.y = 26.0;
+        use egui::TextStyle::*;
+        for (style, size, family) in [
+            (Small, 11.0, FontFamily::Proportional),
+            (Body, 13.0, FontFamily::Proportional),
+            (Button, 13.0, FontFamily::Name(MEDIUM.into())),
+            (Heading, 17.0, FontFamily::Name(SEMIBOLD.into())),
+        ] {
+            s.text_styles.insert(style, FontId::new(size, family));
+        }
         s.interaction.tooltip_delay = 0.4;
     });
 }
@@ -302,7 +337,14 @@ pub fn paint_chip(p: &Painter, r: Rect, t: &Tokens) {
 
 /// [`paint_chip`] at `k` (0..1) of its opacity.
 pub fn paint_chip_at(p: &Painter, r: Rect, t: &Tokens, k: f32) {
-    let radius = CornerRadius::same(R_TILE as u8);
+    let radius = CornerRadius::same(12);
+    for (grow, down, a) in [(6.0, 8.0, 30u8), (0.0, 2.0, 55)] {
+        p.rect_filled(
+            r.expand(grow).translate(egui::vec2(0.0, down)),
+            CornerRadius::same(12 + grow as u8),
+            Color32::from_black_alpha(a).gamma_multiply(k),
+        );
+    }
     p.rect_filled(r, radius, chip_fill(t).gamma_multiply(k));
     p.rect_stroke(r, radius, Stroke::new(1.0, t.card_stroke.gamma_multiply(k)), StrokeKind::Inside);
 }
@@ -312,7 +354,7 @@ fn glass(t: &Tokens, alpha: u8) -> Color32 {
     if red_light() {
         Color32::from_rgba_unmultiplied(30, 0, 0, alpha.max(244))
     } else if t.dark {
-        Color32::from_rgba_unmultiplied(36, 36, 39, alpha)
+        Color32::from_rgba_unmultiplied(22, 22, 25, alpha)
     } else {
         Color32::from_rgba_unmultiplied(248, 248, 250, alpha)
     }
@@ -320,27 +362,46 @@ fn glass(t: &Tokens, alpha: u8) -> Color32 {
 
 /// A card: graphite glass with a hairline and a soft shadow; `k` (0..1) scales how opaque it is.
 pub fn paint_card(p: &Painter, r: Rect, t: &Tokens, k: f32) {
-    paint_glass(p, r, t, 196, k);
+    paint_glass(p, r, t, 206, k);
 }
 
 /// A card that holds a lot of text over the map (the big cards): the same glass, more opaque so the map does not get in the way.
 pub fn paint_card_big(p: &Painter, r: Rect, t: &Tokens, k: f32) {
-    paint_glass(p, r, t, 226, k.clamp(0.0, 1.0));
+    paint_glass(p, r, t, 236, k.clamp(0.0, 1.0));
 }
 
 fn paint_glass(p: &Painter, r: Rect, t: &Tokens, alpha: u8, k: f32) {
     let radius = CornerRadius::same(R_CARD as u8);
-    // a soft shadow: two layers, wider and fainter outside
-    p.rect_filled(
-        r.expand(6.0).translate(egui::vec2(0.0, 6.0)),
-        CornerRadius::same(R_CARD as u8 + 6),
-        Color32::from_black_alpha(18).gamma_multiply(k),
-    );
-    p.rect_filled(r.translate(egui::vec2(0.0, 2.0)), radius, Color32::from_black_alpha(50).gamma_multiply(k));
+    // a deep, soft shadow in three layers, wider and fainter outside, as the web's windows have
+    for (grow, down, a) in [(18.0, 22.0, 26u8), (8.0, 9.0, 40), (0.0, 2.0, 60)] {
+        p.rect_filled(
+            r.expand(grow).translate(egui::vec2(0.0, down)),
+            CornerRadius::same((R_CARD + grow) as u8),
+            Color32::from_black_alpha(a).gamma_multiply(k),
+        );
+    }
     paint_blurred_backdrop(p, r, k);
     p.rect_filled(r, radius, glass(t, alpha).gamma_multiply(k));
-    let hairline = if t.dark { Color32::from_white_alpha(30) } else { Color32::from_black_alpha(24) };
+    let hairline = if t.dark { Color32::from_white_alpha(26) } else { Color32::from_black_alpha(24) };
     p.rect_stroke(r, radius, Stroke::new(1.0, hairline.gamma_multiply(k)), StrokeKind::Inside);
+    if t.dark && !red_light() {
+        // the light catching the top edge: a brighter hairline that fades out over the first few points
+        let top = Color32::from_white_alpha(34).gamma_multiply(k);
+        let y = r.top() + 0.5;
+        p.line_segment([egui::pos2(r.left() + R_CARD, y), egui::pos2(r.right() - R_CARD, y)], Stroke::new(1.0, top));
+    }
+}
+
+/// A day, row or tile that is chosen: the accent's warm tint with the accent's own hairline round it.
+pub fn paint_chosen(p: &Painter, r: Rect, radius: f32, t: &Tokens) {
+    let radius = CornerRadius::same(radius.round() as u8);
+    p.rect_filled(r, radius, t.tool_active);
+    p.rect_stroke(r, radius, Stroke::new(1.0, t.accent.gamma_multiply(0.6)), StrokeKind::Inside);
+}
+
+/// A tab, segment or chip that is on: a light pill. The text on it is `t.on_pill`.
+pub fn paint_pill(p: &Painter, r: Rect, radius: f32, t: &Tokens) {
+    p.rect_filled(r, CornerRadius::same(radius.round() as u8), t.pill);
 }
 
 #[cfg(test)]
@@ -425,7 +486,7 @@ mod tests {
         set_red_light(false);
         // (Light Studio is always dark: the light tokens are not drawn over the map)
         for (t, name) in [(Tokens::dark(), "dark")] {
-            for alpha in [196u8, 226] {
+            for alpha in [206u8, 236] {
                 let g = glass(&t, alpha);
                 for map in [Color32::WHITE, Color32::BLACK] {
                     let bg = through(g, map);
@@ -436,7 +497,7 @@ mod tests {
         }
         set_red_light(true);
         let t = Tokens::red();
-        for alpha in [196u8, 226] {
+        for alpha in [206u8, 236] {
             for map in [Color32::from_rgb(255, 40, 30), Color32::BLACK] {
                 let bg = through(glass(&t, alpha), map);
                 // pure red is dark to the eye: 4:1 is the most it reaches, and the price of keeping night vision

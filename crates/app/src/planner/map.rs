@@ -672,7 +672,7 @@ impl Page<'_> {
             let resp = ui.interact(cell, egui::Id::new(("planner-map-mode", *id)), Sense::click());
             let p = ui.painter();
             if *m == st.map_mode {
-                p.rect_filled(cell, R_CONTROL, t.tool_active);
+                crate::theme::paint_chosen(p, cell, R_CONTROL, &t);
             } else if resp.hovered() {
                 p.rect_filled(cell, R_CONTROL, t.hover.gamma_multiply(0.6));
             }

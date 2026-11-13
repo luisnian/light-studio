@@ -91,20 +91,14 @@ impl<'a> DatePicker<'a> {
                     let is = |p: Option<PickedDate>| p.is_some_and(|p| p.year == year && p.month == Some(month as u8) && p.day == Some(day as u8));
                     let chosen = is(*self.value);
                     if chosen {
-                        ui.painter().rect_filled(r, R_CONTROL, t.tool_active);
+                        crate::theme::paint_chosen(ui.painter(), r, R_CONTROL, &t);
                     } else if resp.hovered() {
                         ui.painter().rect_filled(r, R_CONTROL, t.hover);
                     }
                     if is(self.today) {
                         ui.painter().rect_stroke(r, R_CONTROL, egui::Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
                     }
-                    ui.painter().text(
-                        r.center(),
-                        Align2::CENTER_CENTER,
-                        day.to_string(),
-                        t.font(12.0),
-                        if chosen && t.dark { egui::Color32::WHITE } else { t.text },
-                    );
+                    ui.painter().text(r.center(), Align2::CENTER_CENTER, day.to_string(), t.font(12.0), t.text);
                     if resp.clicked() {
                         picked = Some(day);
                     }

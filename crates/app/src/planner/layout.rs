@@ -138,7 +138,6 @@ impl Page<'_> {
         let n = if planner { 3 } else { 1 };
         let ir = island_rects(free, n);
         let k = card_opacity(&ctx, "island", ir.chip, false);
-        ui.painter().rect_filled(ir.chip.translate(vec2(0.0, 1.5)), 9.0, Color32::from_black_alpha(50).gamma_multiply(k));
         crate::theme::paint_chip_at(ui.painter(), ir.chip, &t, k);
         let _ = ui.interact(ir.chip, egui::Id::new("planner-island-bg"), Sense::click_and_drag());
         let mut icons = ui.new_child(egui::UiBuilder::new().max_rect(ir.chip.shrink2(vec2(2.0, 3.0))).layout(egui::Layout::top_down(Align::Center)));

@@ -202,11 +202,11 @@ fn width(painter: &egui::Painter, t: &Tokens, text: &str) -> f32 {
 fn pill(ui: &mut Ui, painter: &egui::Painter, t: &Tokens, rect: Rect, id: &str, label: &str, on: bool) -> bool {
     let resp = ui.interact(rect, egui::Id::new(("planner-route-light", id)), Sense::click());
     if on {
-        painter.rect_filled(rect, 11.0, t.tool_active);
+        crate::theme::paint_pill(painter, rect, 11.0, &t);
     } else if resp.hovered() {
         painter.rect_filled(rect, 11.0, t.hover.gamma_multiply(0.5));
     }
-    painter.text(rect.center(), Align2::CENTER_CENTER, label, t.font(11.0), if on { t.text } else { t.text_dim });
+    painter.text(rect.center(), Align2::CENTER_CENTER, label, t.medium(11.0), if on { t.on_pill } else { t.text_dim });
     resp.clicked()
 }
 
