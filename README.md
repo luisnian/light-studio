@@ -26,6 +26,13 @@ horizonte de montañas, alineaciones y puntos de interés sincronizables con el 
 - Interfaz en español e inglés.
 - Crate `light-studio-astro`: astronomía propia (teoría lunar de Meeus, ΔT, paralaje topocéntrica, refracción, eclipses), sin dependencias externas.
 
+## Novedades de la 2.0
+
+Rutas GPX con la luz a lo largo del recorrido, horizonte real e índice de salida, vista de montañas en color, sombras
+sobre todo el mapa, eclipses con banda besseliana, mapa sin conexión por regiones y rutas en la app del móvil.
+Si ya tienes desplegado tu Worker de PDI, vuelve a aplicar `schema.sql` y despliégalo de nuevo para recibir rutas
+(ver [`pdi/README.md`](pdi/README.md)).
+
 ## Web
 
 [lightstudio.luisnietofoto.com](https://lightstudio.luisnietofoto.com)
@@ -52,6 +59,14 @@ cargo test
 Genera `dist/Light-Studio-<versión>.dmg` (firma ad hoc; la primera vez, clic derecho ▸ Abrir).
 
 Requiere Rust 1.90 o superior. Solo para macOS.
+
+## Publicar una versión
+
+1. Sube `version` en el `Cargo.toml` raíz (el `.dmg` toma de ahí su nombre) y confirma los cambios en `main`.
+2. En un Mac: `./scripts/make-dmg.sh universal` → `dist/Light-Studio-<versión>.dmg`.
+3. `git tag v<versión> && git push origin v<versión>`.
+4. En GitHub ▸ Releases ▸ *Draft a new release*: elige la etiqueta, añade las notas y adjunta el `.dmg`
+   (o `gh release create v<versión> dist/Light-Studio-<versión>.dmg --title "Light Studio <versión>" --notes-file notas.md`).
 
 ## Variables de entorno (opcionales)
 
